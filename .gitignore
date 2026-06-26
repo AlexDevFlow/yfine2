@@ -1,0 +1,39 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Local audit-loop tracking (never uploaded)
+.audit/
+
+# Internal dev artifacts (not for the public repo)
+PARITY-GAPS.md
+*-redesign.html
+
+# Local user data — must NEVER be committed (real finances / secrets)
+yfine.db
+yfine.db.enc
+*.sqlite
+*.sqlite3
+.yfine-auth.json
+.yfine-unlocked
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

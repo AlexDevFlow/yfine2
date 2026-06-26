@@ -1,0 +1,33 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capability for the main window",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-destroy",
+    "opener:default",
+    "opener:allow-reveal-item-in-dir",
+    "opener:allow-open-path",
+    "sql:default",
+    "sql:allow-execute",
+    "fs:allow-appdata-read-recursive",
+    "fs:allow-appdata-write-recursive",
+    "fs:allow-mkdir",
+    "fs:allow-write-file",
+    "fs:allow-read-file",
+    "fs:allow-remove",
+    "fs:allow-exists",
+    {
+      "identifier": "http:default",
+      "allow": [
+        { "url": "https://api.coingecko.com/*" },
+        { "url": "https://query1.finance.yahoo.com/*" },
+        { "url": "https://query2.finance.yahoo.com/*" },
+        { "url": "https://blockstream.info/*" },
+        { "url": "https://ethereum-rpc.publicnode.com/*" },
+        { "url": "https://api.mainnet-beta.solana.com/*" }
+      ]
+    }
+  ]
+}

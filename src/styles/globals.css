@@ -1,0 +1,657 @@
+@import "tailwindcss";
+
+/*
+ * Yfine design system — usability-first finance aesthetic.
+ * Calm, high-legibility, light + dark, tabular numerals for money, semantic
+ * in/out colors that never rely on color alone. WCAG AA contrast.
+ *
+ * Theme is driven by [data-theme="light"|"dark"] on <html> (ThemeProvider).
+ */
+
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/* ---- semantic palette (changes with theme) ---- */
+:root,
+[data-theme="light"] {
+  --background: #f6f7f9;
+  --surface: #ffffff;
+  --surface-2: #f1f3f6;
+  --foreground: #0d1220;
+  --muted: #5b6472;
+  --muted-2: #8b93a1;
+  --border: #e4e7ec;
+  --border-strong: #d3d8e0;
+  --primary: #4f46e5;
+  --primary-hover: #4338ca;
+  --primary-foreground: #ffffff;
+  --accent-soft: #eef0fe;
+  --positive: #08875d;
+  --positive-soft: #e3f5ec;
+  --negative: #d6336c;
+  --negative-soft: #fde8ef;
+  --warning: #b7791f;
+  --warning-soft: #fcf3e3;
+  --ring: #4f46e5;
+  --shadow-color: 220 40% 12%;
+}
+
+[data-theme="dark"] {
+  --background: #0a0e16;
+  --surface: #121826;
+  --surface-2: #1a2030;
+  --foreground: #eef1f6;
+  --muted: #9aa3b2;
+  --muted-2: #6b7484;
+  --border: #232b3b;
+  --border-strong: #303a4d;
+  --primary: #7c83ff;
+  --primary-hover: #9197ff;
+  --primary-foreground: #0a0e16;
+  --accent-soft: #1b2138;
+  --positive: #34d399;
+  --positive-soft: #102a22;
+  --negative: #fb7099;
+  --negative-soft: #2c1320;
+  --warning: #f1b24a;
+  --warning-soft: #2a2110;
+  --ring: #7c83ff;
+  --shadow-color: 220 60% 2%;
+}
+
+/* ---- map semantic vars into Tailwind utilities (bg-surface, text-muted, ...) ---- */
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-muted-2: var(--muted-2);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-accent-soft: var(--accent-soft);
+  --color-positive: var(--positive);
+  --color-positive-soft: var(--positive-soft);
+  --color-negative: var(--negative);
+  --color-negative-soft: var(--negative-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-ring: var(--ring);
+
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, -apple-system,
+    "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+
+  --radius-card: 1rem;
+  --radius-control: 0.625rem;
+
+  --shadow-card: 0 1px 2px hsl(var(--shadow-color) / 0.06),
+    0 4px 16px hsl(var(--shadow-color) / 0.06);
+  --shadow-pop: 0 8px 32px hsl(var(--shadow-color) / 0.16);
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+  /* Chrome (controls, labels, nav, badges) shouldn't be text-selectable — only
+     real content (movement rows, figures, notes) should. Inputs stay selectable
+     because they aren't matched here. */
+  button,
+  a,
+  label,
+  kbd,
+  summary,
+  nav,
+  [role="button"],
+  [role="tab"],
+  [role="menuitem"] {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  html {
+    color-scheme: light dark;
+  }
+  body {
+    margin: 0;
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-feature-settings: "cv11" 1;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  /* money + figures: aligned tabular numerals everywhere */
+  .num {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+  }
+  /* Privacy mode: blur every monetary/figure value app-wide; hover any one to
+     peek at it. Toggled via the topbar; sets data-privacy on <html>. */
+  html[data-privacy="on"] .num {
+    filter: blur(0.4em);
+    transition: filter 0.12s ease;
+    cursor: default;
+    user-select: none;
+  }
+  /* Focus always reveals, so amount inputs stay editable even in privacy mode. */
+  html[data-privacy="on"] .num:focus,
+  html[data-privacy="on"] .num:focus-within {
+    filter: none;
+    user-select: auto;
+  }
+  /* Hover reveals only when hover-reveal is enabled (the default). Setting
+     data-privacy-hover="off" keeps amounts hidden even on hover. */
+  html[data-privacy="on"]:not([data-privacy-hover="off"]) .num:hover {
+    filter: none;
+    user-select: auto;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html[data-privacy="on"] .num {
+      transition: none;
+    }
+  }
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+  ::selection {
+    background: color-mix(in srgb, var(--primary) 28%, transparent);
+  }
+  /* thin, themed scrollbars */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
+  }
+
+  /* Custom checkboxes & radios — replace the native OS control with a themed
+     one so they match the rest of the UI in both light and dark mode. */
+  input[type="checkbox"],
+  input[type="radio"] {
+    appearance: none;
+    -webkit-appearance: none;
+    flex: none;
+    width: 1.05rem;
+    height: 1.05rem;
+    margin: 0;
+    border: 1.5px solid var(--border-strong);
+    background: var(--surface);
+    cursor: pointer;
+    display: inline-grid;
+    place-content: center;
+    transition: background-color 0.12s ease, border-color 0.12s ease;
+  }
+  input[type="checkbox"] {
+    border-radius: 6px;
+  }
+  input[type="radio"] {
+    border-radius: 50%;
+  }
+  input[type="checkbox"]:hover,
+  input[type="radio"]:hover {
+    border-color: var(--primary);
+  }
+  input[type="checkbox"]::before {
+    content: "";
+    width: 0.62rem;
+    height: 0.62rem;
+    transform: scale(0);
+    transition: transform 0.12s ease;
+    background: var(--primary-foreground);
+    /* check glyph */
+    clip-path: polygon(14% 44%, 0 60%, 40% 100%, 100% 18%, 86% 4%, 38% 70%);
+  }
+  input[type="radio"]::before {
+    content: "";
+    width: 0.55rem;
+    height: 0.55rem;
+    border-radius: 50%;
+    transform: scale(0);
+    transition: transform 0.12s ease;
+    background: var(--primary-foreground);
+  }
+  input[type="checkbox"]:checked,
+  input[type="radio"]:checked {
+    background: var(--primary);
+    border-color: var(--primary);
+  }
+  input[type="checkbox"]:checked::before,
+  input[type="radio"]:checked::before {
+    transform: scale(1);
+  }
+  input[type="checkbox"]:disabled,
+  input[type="radio"]:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  /* Custom select — drop the native OS chevron/styling for a themed one. */
+  select {
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238b93a1' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.625rem center;
+    background-size: 1rem;
+    padding-right: 2.25rem;
+  }
+  /* native dropdown list items follow the theme where the OS honors it */
+  select option {
+    background: var(--surface);
+    color: var(--foreground);
+  }
+}
+
+/* ----- Per-page help drawer content (ported from static/css/yfine.css,
+   re-mapped onto yfine2 semantic tokens) ----- */
+.yn-help-drawer {
+  width: 460px;
+  max-width: 95vw;
+}
+@media (min-width: 992px) {
+  .yn-help-drawer {
+    width: 520px;
+  }
+}
+.yn-help-body {
+  padding: 1.25rem 1.5rem 2rem;
+  line-height: 1.55;
+  font-size: 0.9375rem;
+  color: var(--foreground);
+}
+.yn-help-body h5 {
+  font-size: 1.15rem;
+  font-weight: 600;
+  margin: 0 0 0.35rem;
+}
+.yn-help-body h6 {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+  color: var(--muted);
+  margin-top: 1.5rem;
+  margin-bottom: 0.6rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid var(--border);
+}
+.yn-help-body p {
+  margin: 0 0 0.75rem;
+  color: var(--foreground);
+}
+.yn-help-body ul,
+.yn-help-body ol {
+  padding-left: 1.2rem;
+  margin: 0 0 0.75rem;
+}
+.yn-help-body li {
+  margin-bottom: 0.4rem;
+}
+.yn-help-body strong {
+  font-weight: 600;
+}
+.yn-help-lead {
+  color: var(--muted);
+  font-size: 0.95rem;
+  margin-bottom: 1rem;
+}
+
+/* Action rows: icon + label + description */
+.yn-help-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+.yn-help-action {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.65rem 0.8rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+}
+.yn-help-action-icon {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.4rem;
+  background: var(--accent-soft);
+  color: var(--primary);
+  font-size: 1rem;
+}
+.yn-help-action-icon.success {
+  background: var(--positive-soft);
+  color: var(--positive);
+}
+.yn-help-action-icon.danger {
+  background: var(--negative-soft);
+  color: var(--negative);
+}
+.yn-help-action-icon.warning {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+.yn-help-action-icon.info {
+  background: var(--accent-soft);
+  color: var(--primary);
+}
+.yn-help-action-icon.muted {
+  background: var(--surface-2);
+  color: var(--muted);
+}
+.yn-help-action-body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.yn-help-action-label {
+  font-weight: 600;
+  font-size: 0.92rem;
+  display: block;
+  margin-bottom: 0.1rem;
+}
+.yn-help-action-desc {
+  font-size: 0.86rem;
+  color: var(--muted);
+}
+
+/* Numbered steps */
+.yn-help-steps {
+  list-style: none;
+  padding-left: 0;
+  counter-reset: helpstep;
+}
+.yn-help-steps > li {
+  position: relative;
+  padding-left: 2.2rem;
+  margin-bottom: 0.9rem;
+  counter-increment: helpstep;
+}
+.yn-help-steps > li::before {
+  content: counter(helpstep);
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1.6rem;
+  height: 1.6rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-weight: 600;
+  font-size: 0.8rem;
+}
+
+/* Inline UI chips */
+.yn-help-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: 0.3rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  font-size: 0.82rem;
+  font-weight: 500;
+  white-space: nowrap;
+  vertical-align: baseline;
+}
+.yn-help-chip i {
+  font-size: 0.85rem;
+}
+.yn-help-chip.primary {
+  background: var(--accent-soft);
+  border-color: var(--primary);
+  color: var(--primary);
+}
+.yn-help-chip.success {
+  background: var(--positive-soft);
+  border-color: var(--positive);
+  color: var(--positive);
+}
+.yn-help-chip.danger {
+  background: var(--negative-soft);
+  border-color: var(--negative);
+  color: var(--negative);
+}
+.yn-help-chip.warning {
+  background: var(--warning-soft);
+  border-color: var(--warning);
+  color: var(--warning);
+}
+.yn-help-chip.info {
+  background: var(--accent-soft);
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+/* Callout box for tips / warnings */
+.yn-help-tip {
+  display: flex;
+  gap: 0.7rem;
+  padding: 0.75rem 0.9rem;
+  border-radius: 0.5rem;
+  background: var(--accent-soft);
+  border: 1px solid var(--border-strong);
+  color: var(--foreground);
+  margin: 0.75rem 0;
+  font-size: 0.88rem;
+}
+.yn-help-tip i {
+  color: var(--primary);
+  font-size: 1.05rem;
+  flex: 0 0 auto;
+  margin-top: 0.1rem;
+}
+.yn-help-tip.warn {
+  background: var(--warning-soft);
+  border-color: var(--warning);
+}
+.yn-help-tip.warn i {
+  color: var(--warning);
+}
+
+/* Mini UI mockup */
+.yn-help-mock {
+  border: 1px dashed var(--border-strong);
+  border-radius: 0.5rem;
+  padding: 0.7rem 0.9rem;
+  background: var(--background);
+  margin: 0.5rem 0 0.9rem;
+  font-size: 0.85rem;
+}
+.yn-help-mock-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.25rem 0;
+}
+.yn-help-mock-row + .yn-help-mock-row {
+  border-top: 1px dashed var(--border);
+}
+.yn-help-mock-label {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+.yn-help-mock-value {
+  font-weight: 600;
+}
+.yn-help-mock-value.income {
+  color: var(--positive);
+}
+.yn-help-mock-value.expense {
+  color: var(--negative);
+}
+
+/* ----- Sidebar layout drag-and-drop (settings) ----- */
+.nav-layout-item {
+  cursor: grab;
+}
+.nav-layout-item.nav-layout-dragging {
+  opacity: 0.45;
+}
+.nav-layout-item.nav-layout-drop-above {
+  border-top: 2px solid var(--primary);
+}
+.nav-layout-item.nav-layout-drop-below {
+  border-bottom: 2px solid var(--primary);
+}
+
+/* ---- smooth theme switching: gently transition colour-ish properties on
+   every element. Low specificity (:where) so component hover transitions still
+   win; killed entirely under prefers-reduced-motion below. ---- */
+@media (prefers-reduced-motion: no-preference) {
+  :where([data-theme] *) {
+    transition: background-color 0.25s ease, border-color 0.25s ease,
+      color 0.2s ease, fill 0.2s ease, stroke 0.2s ease;
+  }
+}
+
+/* ---- themed range slider (interface size, etc.) ---- */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  cursor: pointer;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--primary);
+  border: 2px solid var(--surface);
+  box-shadow: var(--shadow-card);
+}
+input[type="range"]::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--primary);
+  border: 2px solid var(--surface);
+}
+
+/* ---- enter animations: search/command palette sliding in from the top ---- */
+@keyframes yn-slide-down {
+  from {
+    opacity: 0;
+    transform: translateY(-14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes yn-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.yn-slide-down {
+  animation: yn-slide-down 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.yn-fade-in {
+  animation: yn-fade-in 0.15s ease-out;
+}
+
+/* ---- subtle highlight pulse for a deep-linked / just-applied row ---- */
+@keyframes yn-highlight {
+  0% {
+    background-color: color-mix(in srgb, var(--primary) 22%, transparent);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+.yn-highlight {
+  animation: yn-highlight 2.4s ease-out;
+}
+
+/* Indeterminate progress sweep — async work with no measurable percentage
+   (e.g. verifying the password + decrypting the DB on unlock). */
+@keyframes yn-progress {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(420%);
+  }
+}
+.yn-progress {
+  animation: yn-progress 1.1s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+/* Skeleton placeholders — the empty app structure shown while data loads,
+   then replaced by the real content (which fades/rolls in). A travelling
+   sheen reads as "loading" without the harsh blink of opacity pulsing. */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--muted-2) 16%, transparent);
+}
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--foreground) 7%, transparent),
+    transparent
+  );
+  animation: yn-shimmer 1.4s ease-in-out infinite;
+}
+@keyframes yn-shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+/* Real data arriving in place of the skeleton: a soft rise + fade, staggered
+   per card via --d so the dashboard assembles top-to-bottom. */
+.yn-fill {
+  opacity: 0;
+  animation: yn-fill 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation-delay: var(--d, 0ms);
+}
+@keyframes yn-fill {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}
