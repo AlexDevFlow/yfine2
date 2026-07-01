@@ -76,7 +76,7 @@ export function SourceDetail() {
           action={
             <div className="text-right">
               <p className={cn("num text-xl font-semibold", source.balance < 0 ? "text-negative" : "text-foreground")}>{formatMoney(source.balance, source.currency, locale)}</p>
-              <p className="text-xs text-muted">{t("n_movements", { defaultValue: "{{n}} movements", n: counts?.[id] ?? 0 })}</p>
+              <p className="text-xs text-muted">{t("n_movements", { defaultValue: "{{count}} movements", count: counts?.[id] ?? 0 })}</p>
             </div>
           }
         />

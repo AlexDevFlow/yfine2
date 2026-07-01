@@ -2,34 +2,30 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
+  lazyRouteComponent,
 } from "@tanstack/react-router";
+// Page components are lazy-loaded (route-level code-splitting) so the webview
+// doesn't parse the whole app on launch. The root layout/app-shell is imported
+// eagerly because it renders at boot. `defaultPreload: "intent"` below still
+// hover-prefetches each page chunk, so nav latency stays hidden.
 import { AppShell } from "@/components/layout/app-shell";
-import { Dashboard } from "@/pages/dashboard";
-import { SourcesPage } from "@/pages/sources";
-import { SourceDetail } from "@/pages/source-detail";
-import { MovementsPage } from "@/pages/movements";
-import { RecurringPage } from "@/pages/recurring";
-import { NotificationsPage } from "@/pages/notifications";
-import { BudgetsPage } from "@/pages/budgets";
-import { GoalsPage } from "@/pages/goals";
-import { WhimsPage } from "@/pages/whims";
-import { PortfoliosPage } from "@/pages/portfolios";
-import { SavingsPage } from "@/pages/savings";
-import { TagsPage } from "@/pages/tags";
-import { SettingsPage } from "@/pages/settings";
 
 const rootRoute = createRootRoute({ component: AppShell });
 
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/",
-  component: Dashboard,
+  component: lazyRouteComponent(() =>
+    import("@/pages/dashboard").then((m) => ({ default: m.Dashboard }))
+  ),
 });
 
 const sourcesRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/sources",
-  component: SourcesPage,
+  component: lazyRouteComponent(() =>
+    import("@/pages/sources").then((m) => ({ default: m.SourcesPage }))
+  ),
   // `?create=1` opens the New Source form immediately (dashboard quick action).
   validateSearch: (search: Record<string, unknown>): { create?: boolean } =>
     search.create ? { create: true } : {},
@@ -38,7 +34,9 @@ const sourcesRoute = createRoute({
 const sourceDetailRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/sources/$id",
-  component: SourceDetail,
+  component: lazyRouteComponent(() =>
+    import("@/pages/source-detail").then((m) => ({ default: m.SourceDetail }))
+  ),
 });
 
 interface MovementsSearch {
@@ -58,7 +56,9 @@ interface MovementsSearch {
 const movementsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/movements",
-  component: MovementsPage,
+  component: lazyRouteComponent(() =>
+    import("@/pages/movements").then((m) => ({ default: m.MovementsPage }))
+  ),
   // Allow deep-linking a pre-applied tag filter (budget card), a direction +
   // from-date (dashboard month modal), or a focused movement id (global search).
   validateSearch: (search: Record<string, unknown>): MovementsSearch => {
@@ -81,7 +81,9 @@ const movementsRoute = createRoute({
 const recurringRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/recurring",
-  component: RecurringPage,
+  component: lazyRouteComponent(() =>
+    import("@/pages/recurring").then((m) => ({ default: m.RecurringPage }))
+  ),
   // `?create=1` opens the New Recurring form immediately (dashboard quick action).
   validateSearch: (search: Record<string, unknown>): { create?: boolean } =>
     search.create ? { create: true } : {},
@@ -90,25 +92,65 @@ const recurringRoute = createRoute({
 const notificationsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/notifications",
-  component: NotificationsPage,
+  component: lazyRouteComponent(() =>
+    import("@/pages/notifications").then((m) => ({ default: m.NotificationsPage }))
+  ),
 });
 
-const budgetsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/budgets", component: BudgetsPage });
-const goalsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/goals", component: GoalsPage });
-const whimsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/whims", component: WhimsPage });
-const portfoliosRoute = createRoute({ getParentRoute: () => rootRoute, path: "/portfolios", component: PortfoliosPage });
+const budgetsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/budgets",
+  component: lazyRouteComponent(() =>
+    import("@/pages/budgets").then((m) => ({ default: m.BudgetsPage }))
+  ),
+});
+const goalsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/goals",
+  component: lazyRouteComponent(() =>
+    import("@/pages/goals").then((m) => ({ default: m.GoalsPage }))
+  ),
+});
+const whimsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/whims",
+  component: lazyRouteComponent(() =>
+    import("@/pages/whims").then((m) => ({ default: m.WhimsPage }))
+  ),
+});
+const portfoliosRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/portfolios",
+  component: lazyRouteComponent(() =>
+    import("@/pages/portfolios").then((m) => ({ default: m.PortfoliosPage }))
+  ),
+});
 const savingsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/savings",
-  component: SavingsPage,
+  component: lazyRouteComponent(() =>
+    import("@/pages/savings").then((m) => ({ default: m.SavingsPage }))
+  ),
   // Allow a global-search deep-link to a specific saving.
   validateSearch: (search: Record<string, unknown>): { focus?: number } => {
     const focus = Number(search.focus);
     return Number.isFinite(focus) && focus > 0 ? { focus } : {};
   },
 });
-const tagsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/tags", component: TagsPage });
-const settingsRoute = createRoute({ getParentRoute: () => rootRoute, path: "/settings", component: SettingsPage });
+const tagsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/tags",
+  component: lazyRouteComponent(() =>
+    import("@/pages/tags").then((m) => ({ default: m.TagsPage }))
+  ),
+});
+const settingsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/settings",
+  component: lazyRouteComponent(() =>
+    import("@/pages/settings").then((m) => ({ default: m.SettingsPage }))
+  ),
+});
 
 const routeTree = rootRoute.addChildren([
   indexRoute,

@@ -23,9 +23,18 @@
       "csp": null
     }
   },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/AlexDevFlow/yfine2/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDE1NTkzRDIxNzgyMjdEQkEKUldTNmZTSjRJVDFaRmN4TGFwWFcvQmY3Qk5NOG5SVlU5RzhwK01oQ3JoeHZoLzJJOFdpNHk5UVgK"
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "category": "Finance",
     "publisher": "AlexDevFlow",
     "licenseFile": "../LICENSE",

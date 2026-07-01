@@ -777,6 +777,13 @@
           "heal_default": null
         },
         {
+          "name": "auto_update_check",
+          "type": "BOOLEAN",
+          "notnull": true,
+          "pk": 0,
+          "heal_default": "0"
+        },
+        {
           "name": "saved_views_json",
           "type": "VARCHAR",
           "notnull": true,

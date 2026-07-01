@@ -10,6 +10,7 @@ import { CommandPalette } from "./command-palette";
 import { mobileNavFromLayout, type ResolvedNavItem } from "./nav";
 import { useNavLayout } from "./use-nav-layout";
 import { NotificationWatcher } from "./notification-watcher";
+import { UpdateWatcher } from "./update-watcher";
 import { Sidebar } from "./sidebar";
 import { Topbar } from "./topbar";
 import { useHotkeys } from "./use-hotkeys";
@@ -271,6 +272,7 @@ function FloatingBottomNav() {
 const PRICE_REFRESH_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
 
 export function AppShell() {
+  const { t } = useTranslation();
   const [collapsed, setCollapsed] = useState(
     () => localStorage.getItem("yfine.sidebar") === "1",
   );
@@ -359,7 +361,7 @@ export function AppShell() {
 
       {/* Mobile off-canvas sidebar (only in "sidebar" mobile-nav mode) */}
       {mobileNavMode === "sidebar" && mobileNavOpen && (
-        <div className="fixed inset-0 z-50 flex md:hidden" role="dialog" aria-modal="true">
+        <div className="fixed inset-0 z-50 flex md:hidden" role="dialog" aria-modal="true" aria-label={t("menu", { defaultValue: "Menu" })}>
           <div className="flex-1 bg-black/40 backdrop-blur-sm" onMouseDown={() => setMobileNavOpen(false)} />
           <div className="absolute inset-y-0 left-0">
             <Sidebar collapsed={false} onToggle={toggle} mobile onNavigate={() => setMobileNavOpen(false)} />
@@ -387,6 +389,7 @@ export function AppShell() {
       <CommandPalette open={searchOpen} onClose={() => setSearchOpen(false)} />
       <HelpDrawer open={helpOpen} onClose={() => setHelpOpen(false)} />
       <NotificationWatcher />
+      <UpdateWatcher />
     </div>
   );
 }

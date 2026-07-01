@@ -554,7 +554,7 @@ export function SourcesPage() {
                         {f.hidden_from_sources === 1 && (
                           <Badge>{t("hidden", { defaultValue: "Hidden" })}</Badge>
                         )}
-                        <span className="text-xs text-muted">{t("n_movements", { defaultValue: "{{n}} movements", n: counts?.[f.id] ?? 0 })}</span>
+                        <span className="text-xs text-muted">{t("n_movements", { defaultValue: "{{count}} movements", count: counts?.[f.id] ?? 0 })}</span>
                       </div>
                     </div>
                   </div>

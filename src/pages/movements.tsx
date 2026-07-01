@@ -1,6 +1,6 @@
 import { ArrowDownLeft, ArrowLeftRight, ArrowUpRight, Bookmark, CalendarDays, Check, ChevronDown, ChevronRight, EyeOff, Hash, Layers, ListChecks, Paperclip, Pencil, Plus, Repeat, Scale, Search, SlidersHorizontal, Tag as TagIcon, Trash2, X, Zap } from "lucide-react";
 import { getRouteApi } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -225,7 +225,13 @@ function FilterChip({ children, color, onRemove }: { children: ReactNode; color?
   );
 }
 
-function MovementRow({
+// Memoized so unrelated parent re-renders (notably the per-mousemove
+// `setSelected` during drag-paint) don't re-render all ~1000 rows. Effective
+// only because every prop is referentially stable: the callbacks below are
+// id-keyed and wrapped in `useCallback` by the parent (see `rowCallbacks`),
+// `m`/`attachCount`/`locale` come straight from query data, and the
+// per-row booleans (`selected`/`highlight`) only change for the affected row.
+const MovementRow = memo(function MovementRow({
   m,
   locale,
   onEdit,
@@ -242,19 +248,20 @@ function MovementRow({
 }: {
   m: EnrichedMovement;
   locale?: string;
-  onEdit: () => void;
-  onDelete: () => void;
-  onMakeRecurring?: () => void;
-  onToggleExclude?: () => void;
-  onAttach?: () => void;
+  /** Id-keyed so the parent can pass one stable callback to every row. */
+  onEdit: (id: number) => void;
+  onDelete: (id: number) => void;
+  onMakeRecurring?: (id: number) => void;
+  onToggleExclude?: (id: number) => void;
+  onAttach?: (id: number) => void;
   attachCount?: number;
   /** Checkbox-selection mode: rows become drag-to-select targets. */
   selectMode?: boolean;
   selected?: boolean;
   /** Press on a row (starts a drag-paint, toggling this row). */
-  onSelectDown?: () => void;
+  onSelectDown?: (id: number) => void;
   /** Drag entered this row (paint it with the in-progress selection state). */
-  onSelectEnter?: () => void;
+  onSelectEnter?: (id: number) => void;
   highlight?: boolean;
 }) {
   const { t } = useTranslation();
@@ -262,6 +269,15 @@ function MovementRow({
   useEffect(() => {
     if (highlight) rowRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [highlight]);
+  // Bind the row's id once so the markup keeps its zero-arg handlers unchanged.
+  const id = m.id;
+  const handleEdit = useCallback(() => onEdit(id), [onEdit, id]);
+  const handleDelete = useCallback(() => onDelete(id), [onDelete, id]);
+  const handleMakeRecurring = useCallback(() => onMakeRecurring?.(id), [onMakeRecurring, id]);
+  const handleToggleExclude = useCallback(() => onToggleExclude?.(id), [onToggleExclude, id]);
+  const handleAttach = useCallback(() => onAttach?.(id), [onAttach, id]);
+  const handleSelectDown = useCallback(() => onSelectDown?.(id), [onSelectDown, id]);
+  const handleSelectEnter = useCallback(() => onSelectEnter?.(id), [onSelectEnter, id]);
   const transfer = isTransfer(m);
   const excluded = m.exclude_from_stats === 1;
   const sourceLabel = m.source_name ?? (m.source_id == null ? t("external", { defaultValue: "External" }) : t("deleted", { defaultValue: "Deleted" }));
@@ -276,8 +292,8 @@ function MovementRow({
     <li
       ref={rowRef}
       data-mv-id={m.id}
-      onMouseDown={selectMode ? onSelectDown : undefined}
-      onMouseEnter={selectMode ? onSelectEnter : undefined}
+      onMouseDown={selectMode ? handleSelectDown : undefined}
+      onMouseEnter={selectMode ? handleSelectEnter : undefined}
       className={cn(
         // Rows are never text-selectable (avoids the ugly native highlight);
         // selection is done with the checkboxes / drag-paint instead.
@@ -324,31 +340,31 @@ function MovementRow({
           {amountText}
         </span>
         {onAttach && (
-          <button onClick={onAttach} aria-label={t("attachments", { defaultValue: "Attachments" })} className={cn("relative rounded-md p-1.5 transition-opacity hover:bg-surface-2 hover:text-foreground", attachCount ? "text-primary opacity-100" : "text-muted opacity-0 group-hover:opacity-100")}>
+          <button onClick={handleAttach} aria-label={t("attachments", { defaultValue: "Attachments" })} className={cn("relative rounded-md p-1.5 transition-opacity hover:bg-surface-2 hover:text-foreground", attachCount ? "text-primary opacity-100" : "text-muted opacity-0 group-hover:opacity-100")}>
             <Paperclip className="h-4 w-4" />
             {!!attachCount && <span className="absolute -right-0.5 -top-0.5 grid h-3.5 min-w-3.5 place-items-center rounded-full bg-primary px-0.5 text-[9px] text-primary-foreground">{attachCount}</span>}
           </button>
         )}
         {onToggleExclude && (
-          <button onClick={onToggleExclude} aria-label={t("exclude_from_stats", { defaultValue: "Exclude from stats" })} className={cn("rounded-md p-1.5 transition-opacity hover:bg-surface-2 hover:text-foreground", excluded ? "text-primary opacity-100" : "text-muted opacity-0 group-hover:opacity-100")}>
+          <button onClick={handleToggleExclude} aria-label={t("exclude_from_stats", { defaultValue: "Exclude from stats" })} className={cn("rounded-md p-1.5 transition-opacity hover:bg-surface-2 hover:text-foreground", excluded ? "text-primary opacity-100" : "text-muted opacity-0 group-hover:opacity-100")}>
             <EyeOff className="h-4 w-4" />
           </button>
         )}
         {onMakeRecurring && !transfer && (
-          <button onClick={onMakeRecurring} aria-label={t("make_recurring", { defaultValue: "Make recurring" })} className="rounded-md p-1.5 text-muted opacity-0 transition-opacity hover:bg-surface-2 hover:text-foreground group-hover:opacity-100">
+          <button onClick={handleMakeRecurring} aria-label={t("make_recurring", { defaultValue: "Make recurring" })} className="rounded-md p-1.5 text-muted opacity-0 transition-opacity hover:bg-surface-2 hover:text-foreground group-hover:opacity-100">
             <Repeat className="h-4 w-4" />
           </button>
         )}
-        <button onClick={onEdit} aria-label={t("edit", { defaultValue: "Edit" })} className="rounded-md p-1.5 text-muted opacity-0 transition-opacity hover:bg-surface-2 hover:text-foreground group-hover:opacity-100">
+        <button onClick={handleEdit} aria-label={t("edit", { defaultValue: "Edit" })} className="rounded-md p-1.5 text-muted opacity-0 transition-opacity hover:bg-surface-2 hover:text-foreground group-hover:opacity-100">
           <Pencil className="h-4 w-4" />
         </button>
-        <button onClick={onDelete} aria-label={t("delete", { defaultValue: "Delete" })} className="rounded-md p-1.5 text-muted opacity-0 transition-opacity hover:bg-negative-soft hover:text-negative group-hover:opacity-100">
+        <button onClick={handleDelete} aria-label={t("delete", { defaultValue: "Delete" })} className="rounded-md p-1.5 text-muted opacity-0 transition-opacity hover:bg-negative-soft hover:text-negative group-hover:opacity-100">
           <Trash2 className="h-4 w-4" />
         </button>
       </div>
     </li>
   );
-}
+});
 
 export function MovementsPage() {
   const { t, i18n } = useTranslation();
@@ -494,17 +510,20 @@ export function MovementsPage() {
   // others to extend. The first row's current state decides whether the drag
   // selects or deselects, so dragging back over a row undoes it.
   const dragRef = useRef<{ active: boolean; selecting: boolean }>({ active: false, selecting: true });
-  const beginDrag = (id: number) => {
-    const selecting = !selected.has(id);
-    dragRef.current = { active: true, selecting };
+  // Stable so the memoized rows don't re-render every time `selected` changes
+  // (each mousemove). The press direction is decided from the latest set inside
+  // the functional updater, then mirrored onto dragRef for the drag to read.
+  const beginDrag = useCallback((id: number) => {
     setSelected((s) => {
+      const selecting = !s.has(id);
+      dragRef.current = { active: true, selecting };
       const n = new Set(s);
       if (selecting) n.add(id);
       else n.delete(id);
       return n;
     });
-  };
-  const extendDrag = (id: number) => {
+  }, []);
+  const extendDrag = useCallback((id: number) => {
     if (!dragRef.current.active) return;
     const { selecting } = dragRef.current;
     setSelected((s) => {
@@ -514,7 +533,7 @@ export function MovementsPage() {
       else n.delete(id);
       return n;
     });
-  };
+  }, []);
   useEffect(() => {
     const up = () => { dragRef.current.active = false; };
     window.addEventListener("mouseup", up);
@@ -582,6 +601,23 @@ export function MovementsPage() {
     if (isTransfer(m)) setTrModal({ open: true, editing: m });
     else setMvModal({ open: true, editing: m });
   };
+
+  // Stable, id-keyed row handlers so every MovementRow gets referentially
+  // constant callbacks (the precondition for React.memo to actually skip
+  // re-renders during drag-paint / unrelated parent state changes). The handlers
+  // that need the full movement resolve it from a ref to the latest loaded set,
+  // so they keep the same identity even as `data` updates.
+  const itemsRef = useRef<EnrichedMovement[]>([]);
+  itemsRef.current = data?.items ?? [];
+  const byId = useCallback((id: number) => itemsRef.current.find((x) => x.id === id), []);
+  const rowEdit = useCallback((id: number) => { const m = byId(id); if (m) openEdit(m); }, [byId]);
+  const rowDelete = useCallback((id: number) => { const m = byId(id); if (m) setDeleting(m); }, [byId]);
+  const rowMakeRecurring = useCallback((id: number) => {
+    const m = byId(id);
+    if (m) { setRecFreq("monthly"); setRecApplyMode("confirm"); setRecurringFrom(m); }
+  }, [byId]);
+  const rowToggleExclude = useCallback((id: number) => toggleExclude.mutate(id), [toggleExclude]);
+  const rowAttach = useCallback((id: number) => { const m = byId(id); if (m) setAttachFor(m); }, [byId]);
 
   const submitMovement = (v: MovementFormValues) => {
     setFormError(undefined);
@@ -1047,16 +1083,16 @@ export function MovementsPage() {
                                   key={m.id}
                                   m={m}
                                   locale={locale}
-                                  onEdit={() => openEdit(m)}
-                                  onDelete={() => setDeleting(m)}
-                                  onMakeRecurring={() => { setRecFreq("monthly"); setRecApplyMode("confirm"); setRecurringFrom(m); }}
-                                  onToggleExclude={() => toggleExclude.mutate(m.id)}
-                                  onAttach={tauri ? () => setAttachFor(m) : undefined}
+                                  onEdit={rowEdit}
+                                  onDelete={rowDelete}
+                                  onMakeRecurring={rowMakeRecurring}
+                                  onToggleExclude={rowToggleExclude}
+                                  onAttach={tauri ? rowAttach : undefined}
                                   attachCount={attachCounts?.[m.id] ?? 0}
                                   selectMode={selectMode}
                                   selected={selectMode ? selected.has(m.id) : undefined}
-                                  onSelectDown={selectMode ? () => beginDrag(m.id) : undefined}
-                                  onSelectEnter={selectMode ? () => extendDrag(m.id) : undefined}
+                                  onSelectDown={selectMode ? beginDrag : undefined}
+                                  onSelectEnter={selectMode ? extendDrag : undefined}
                                   highlight={focusId != null && m.id === focusId}
                                 />
                               ))}

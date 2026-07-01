@@ -510,11 +510,15 @@
   border-bottom: 2px solid var(--primary);
 }
 
-/* ---- smooth theme switching: gently transition colour-ish properties on
-   every element. Low specificity (:where) so component hover transitions still
-   win; killed entirely under prefers-reduced-motion below. ---- */
+/* ---- smooth theme switching ---- Animate colours ONLY during an actual
+   light<->dark switch: the theme provider adds a transient `theme-transition`
+   class to <html> for ~300ms, then removes it. A PERMANENT `* { transition }`
+   (the previous approach) forced every scroll/hover/value change to carry
+   transition bookkeeping on every node — including fill/stroke on each SVG chart
+   path — which is noticeably janky in the (webkit) webview. :where() keeps the
+   specificity at 0 so component hover transitions still win during the switch. */
 @media (prefers-reduced-motion: no-preference) {
-  :where([data-theme] *) {
+  :where(html.theme-transition *) {
     transition: background-color 0.25s ease, border-color 0.25s ease,
       color 0.2s ease, fill 0.2s ease, stroke 0.2s ease;
   }

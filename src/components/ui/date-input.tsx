@@ -1,4 +1,5 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { CalendarDays, ChevronLeft, ChevronRight, X } from "lucide-react";
 import { cn } from "@/lib/cn";
@@ -60,17 +61,49 @@ export function DateInput({
   const [open, setOpen] = useState(false);
   const [view, setView] = useState(() => (value || todayISO()).slice(0, 7));
   const wrapRef = useRef<HTMLDivElement>(null);
+  const popRef = useRef<HTMLDivElement>(null);
+  // Fixed-position coordinates for the body-portaled popover (null until measured).
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
 
   // Re-anchor the visible month whenever the popover (re)opens.
   useEffect(() => {
     if (open) setView((value || todayISO()).slice(0, 7));
   }, [open, value]);
 
-  // Dismiss on outside click / Escape.
+  // The calendar is portaled to <body> (so it can't be clipped by a modal's
+  // overflow or trapped under a scroll container's scrollbar on webkit). Position
+  // it under the trigger in viewport coords, flipping above when there's no room,
+  // and clamping to the viewport horizontally. Re-place on scroll/resize.
+  useLayoutEffect(() => {
+    if (!open) return;
+    const POP_W = 272; // w-[17rem]
+    const place = () => {
+      const wrap = wrapRef.current;
+      if (!wrap) return;
+      const r = wrap.getBoundingClientRect();
+      const popH = popRef.current?.offsetHeight ?? 330;
+      const below = r.bottom + 4;
+      const top = below + popH > window.innerHeight - 8 && r.top - 4 - popH > 8 ? r.top - 4 - popH : below;
+      const left = Math.max(8, Math.min(r.left, window.innerWidth - 8 - POP_W));
+      setPos({ top, left });
+    };
+    place();
+    window.addEventListener("scroll", place, true);
+    window.addEventListener("resize", place);
+    return () => {
+      window.removeEventListener("scroll", place, true);
+      window.removeEventListener("resize", place);
+    };
+  }, [open]);
+
+  // Dismiss on outside click / Escape — the portaled popover lives outside wrapRef,
+  // so a click inside it must NOT count as "outside".
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+      const t = e.target as Node;
+      if (wrapRef.current?.contains(t) || popRef.current?.contains(t)) return;
+      setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);
@@ -129,10 +162,12 @@ export function DateInput({
         </span>
       </button>
 
-      {open && (
+      {open && pos && createPortal(
         <div
+          ref={popRef}
           role="dialog"
-          className="absolute left-0 z-40 mt-1 w-[17rem] rounded-[var(--radius-control)] border border-border bg-surface p-3 shadow-[var(--shadow-pop)]"
+          style={{ position: "fixed", top: pos.top, left: pos.left }}
+          className="z-[60] w-[17rem] rounded-[var(--radius-control)] border border-border bg-surface p-3 shadow-[var(--shadow-pop)]"
         >
           <div className="mb-2 flex items-center justify-between">
             <button type="button" onClick={() => setView((v) => shiftMonth(v, -1))} aria-label={t("previous", { defaultValue: "Previous" })} className="rounded-md p-1 text-muted hover:bg-surface-2 hover:text-foreground">
@@ -190,7 +225,8 @@ export function DateInput({
               </button>
             )}
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

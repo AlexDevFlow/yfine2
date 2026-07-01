@@ -37,6 +37,13 @@ describe("settings repo", () => {
     expect((await updateSettings(db, { privacy_unlock_code: "" })).privacy_unlock_code).toBeNull();
   });
 
+  it("defaults auto_update_check to OFF and round-trips the toggle", async () => {
+    const { db } = await makeMemDb();
+    expect((await getSettings(db)).auto_update_check).toBe(0); // off by default (offline-first)
+    expect((await updateSettings(db, { auto_update_check: true })).auto_update_check).toBe(1);
+    expect((await updateSettings(db, { auto_update_check: false })).auto_update_check).toBe(0);
+  });
+
   it("rejects invalid value domains", async () => {
     const { db } = await makeMemDb();
     await expect(updateSettings(db, { theme: "neon" })).rejects.toBeTruthy();

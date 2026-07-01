@@ -86,13 +86,19 @@ missing tables/columns additively and never drops data.
 **Yfine sends no telemetry and makes zero network requests by default.** Everything
 works fully offline.
 
-Two **opt-in** features reach the internet only when you turn them on:
+Three **opt-in** features reach the internet only when you turn them on:
 
 - **Live prices** (portfolios): fetches quotes from CoinGecko and Yahoo Finance.
 - **On-chain balance watch**: queries a public blockchain RPC (blockstream.info for
   BTC, a public Ethereum RPC, Solana mainnet) for an address you add. Note that this
   sends the **public wallet address** you're watching to that third-party endpoint,
   which can correlate it with your IP. Don't enable it if that matters to you.
+- **Update check** (Settings → Updates): asks GitHub whether a newer release exists.
+  A manual "Check for updates" button is always available; an optional toggle also
+  checks once on launch. Both are **off until you ask** — nothing downloads or
+  installs without your confirmation, and with no connection it simply reports that
+  the update server couldn't be reached. (On Linux, in-app updates apply to the
+  `.AppImage` build; `.deb` users update by re-downloading.)
 
 The portfolio screen can also embed a TradingView chart widget, which loads from
 TradingView when shown.
@@ -141,6 +147,22 @@ GitHub Release with the artifacts attached. Steps:
 4. Sanity-check that each installer launches on its OS before announcing.
 
 Binaries are unsigned by design; the install instructions above cover the first-launch bypass.
+
+**In-app updater (optional).** For the Settings → Updates feature to deliver updates,
+the release must be **signed** and ship a `latest.json` asset. CI does this
+automatically when two repository secrets are set
+(**Settings → Secrets and variables → Actions**):
+
+- `TAURI_SIGNING_PRIVATE_KEY` — contents of the minisign private key from
+  `pnpm tauri signer generate`. **Keep it safe and never commit it**; losing it means
+  existing installs can no longer verify updates. The matching public key is already
+  baked into [`src-tauri/tauri.conf.json`](src-tauri/tauri.conf.json) (`plugins.updater.pubkey`).
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` — the key's password (set it to an empty
+  value if the key has none).
+
+If the secrets are absent the build still succeeds — it just ships installers without
+update metadata, and the in-app check reports "up to date". The updater resolves the
+**latest published** (non-draft) release, so updates go live only after you publish.
 
 ---
 

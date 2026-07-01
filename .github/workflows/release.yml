@@ -1,9 +1,12 @@
 name: Build Yfine desktop installers
 
 # Produces native installers (.AppImage/.deb, .dmg, .msi) on tag push.
-# No code signing/notarization — unsigned builds; the README documents the
-# per-OS first-launch bypass. Paths resolve from the repo root (standalone
-# yfine2 repo: this file lives at .github/workflows/release.yml).
+# No OS code signing/notarization — unsigned builds; the README documents the
+# per-OS first-launch bypass. (Separately, the optional in-app updater signs its
+# artifacts with a minisign key via TAURI_SIGNING_PRIVATE_KEY — see below; that is
+# not OS code signing and does not remove the first-launch prompt.) Paths resolve
+# from the repo root (standalone yfine2 repo: this file lives at
+# .github/workflows/release.yml).
 on:
   push:
     tags: ["v*"]
@@ -61,6 +64,12 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Updater signing. With these set, tauri-action signs each artifact and
+          # generates the `latest.json` consumed by the in-app updater. If the
+          # secrets are absent the build still succeeds — it just ships unsigned,
+          # update-less installers (the updater then reports "up to date").
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Yfine ${{ github.ref_name }}"

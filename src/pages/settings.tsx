@@ -1,4 +1,4 @@
-import { Briefcase, Database, Download, FileSpreadsheet, FileJson, FileText, Keyboard, Languages, ListOrdered, Lock, LogOut, Monitor, Moon, Palette, Shield, ShieldCheck, Sun, UploadCloud, Upload, FileUp, Undo2, Trash2 } from "lucide-react";
+import { Briefcase, Database, Download, DownloadCloud, FileSpreadsheet, FileJson, FileText, Keyboard, Languages, ListOrdered, Lock, LogOut, Monitor, Moon, Palette, RefreshCw, Shield, ShieldCheck, Sun, UploadCloud, Upload, FileUp, Undo2, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
@@ -29,6 +29,7 @@ import { downloadBytes, downloadText } from "@/lib/download";
 import { useToast } from "@/components/ui/toast";
 import { BASE_CURRENCY_CODES, currencyFlag, formatMoney } from "@/lib/format";
 import { applyUiScale } from "@/lib/ui-scale";
+import { checkForUpdate, currentVersion, installPendingUpdate, type UpdateState } from "@/lib/updater";
 import { useErrorText } from "@/lib/use-error-text";
 import { HotkeysCard, MenuLayoutCard, MobileNavCard } from "./settings-navigation";
 
@@ -238,6 +239,100 @@ function PrivacyCard() {
           </div>
           {savedCode && codeDraft == null && <p className="mt-1.5 text-xs text-positive">{t("privacy_unlock_code_set", { defaultValue: "A code is set." })}</p>}
         </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * Updates: opt-in launch check + manual "Check for updates" + install. The only
+ * feature that reaches the internet on its own — and only when the user enables
+ * it. Every path degrades cleanly offline (see lib/updater.ts).
+ */
+function UpdatesCard() {
+  const { t } = useTranslation();
+  const { data: prefs } = usePreferences();
+  const update = useUpdatePreferences();
+  const { push } = useToast();
+  const tauri = isTauri();
+
+  const [version, setVersion] = useState("");
+  const [state, setState] = useState<UpdateState | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [pct, setPct] = useState<number | null>(null);
+
+  useEffect(() => {
+    void currentVersion().then(setVersion);
+  }, []);
+
+  const runCheck = async () => {
+    setBusy(true);
+    setState({ kind: "checking" });
+    setState(await checkForUpdate());
+    setBusy(false);
+  };
+
+  const runInstall = async () => {
+    setBusy(true);
+    setPct(null);
+    try {
+      await installPendingUpdate((d, total) => setPct(total ? Math.round((d / total) * 100) : null));
+      // relaunches into the new version on success — code below does not run.
+    } catch (e) {
+      setBusy(false);
+      setPct(null);
+      push({ title: t("update_failed", { defaultValue: "Update failed" }), body: e instanceof Error ? e.message : String(e), tone: "alert" });
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader
+        title={t("updates", { defaultValue: "Updates" })}
+        subtitle={t("updates_hint", { defaultValue: "Yfine can check GitHub for new versions. This is the only feature that reaches the internet on its own — and only if you turn it on." })}
+      />
+      <CardContent className="space-y-3 pt-3">
+        {version && (
+          <p className="text-sm text-muted">
+            {t("current_version", { defaultValue: "Current version" })}: <span className="font-medium text-foreground">v{version}</span>
+          </p>
+        )}
+
+        <label className="flex items-start gap-3 rounded-[var(--radius-control)] border border-border p-3">
+          <input type="checkbox" className="mt-0.5" checked={(prefs?.auto_update_check ?? 0) === 1} onChange={(e) => update.mutate({ auto_update_check: e.target.checked })} />
+          <span>
+            <span className="block text-sm font-medium text-foreground">{t("auto_update_title", { defaultValue: "Check for updates on launch" })}</span>
+            <span className="block text-xs text-muted">
+              {t("auto_update_desc", { defaultValue: "When on, Yfine quietly checks for a newer version each time it starts and notifies you if one is available. Off by default — and nothing ever installs without your confirmation." })}
+            </span>
+          </span>
+        </label>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" size="sm" disabled={!tauri || busy} onClick={runCheck}>
+            <RefreshCw className={cn("h-4 w-4", busy && state?.kind === "checking" && "animate-spin")} />
+            {t("check_for_updates", { defaultValue: "Check for updates" })}
+          </Button>
+          {!tauri && <span className="text-xs text-muted">{t("updates_preview_note", { defaultValue: "Available in the installed app only." })}</span>}
+        </div>
+
+        {state?.kind === "uptodate" && <p className="text-sm text-positive">{t("update_uptodate", { defaultValue: "You're on the latest version." })}</p>}
+        {state?.kind === "offline" && <p className="text-sm text-warning">{t("update_offline", { defaultValue: "Couldn't reach the update server. Check your connection and try again." })}</p>}
+        {state?.kind === "error" && <p className="text-sm text-negative">{t("update_failed", { defaultValue: "Update failed" })}: {state.message}</p>}
+
+        {state?.kind === "available" && (
+          <div className="space-y-2 rounded-[var(--radius-control)] border border-primary/40 bg-accent-soft p-3">
+            <p className="text-sm font-medium text-foreground">{t("update_available_body", { defaultValue: "Version {{version}} is ready to install.", version: state.version })}</p>
+            {state.notes && <p className="max-h-32 overflow-y-auto whitespace-pre-wrap text-xs text-muted">{state.notes}</p>}
+            <div className="flex items-center gap-3">
+              <Button size="sm" disabled={busy} onClick={runInstall}>
+                <DownloadCloud className="h-4 w-4" /> {t("update_install", { defaultValue: "Install & restart" })}
+              </Button>
+              {pct != null && <span className="text-xs text-muted">{pct}%</span>}
+              {busy && pct == null && <span className="text-xs text-muted">{t("update_downloading", { defaultValue: "Downloading update…" })}</span>}
+            </div>
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -953,7 +1048,7 @@ function SecurityCard() {
 /**
  * Settings sections — vertical sidebar nav, faithful to the original app's
  * settings/index.html (left list-group + right content pane). Same order and
- * icons as the reference: Theme, Language, Portfolios, LAN access, Security,
+ * icons as the reference: Theme, Language, Portfolios, Privacy, Security,
  * Data, Import, Menu, Hotkeys. Plugins is intentionally omitted (Python-only).
  */
 const SETTINGS_SECTIONS: { id: string; labelKey: string; label: string; icon: typeof Palette; iconClass: string; render: () => React.ReactNode }[] = [
@@ -962,6 +1057,7 @@ const SETTINGS_SECTIONS: { id: string; labelKey: string; label: string; icon: ty
   { id: "portfolios", labelKey: "portfolios", label: "Portfolios", icon: Briefcase, iconClass: "text-primary", render: () => <PortfoliosCard /> },
   { id: "privacy", labelKey: "privacy_mode", label: "Privacy mode", icon: Lock, iconClass: "text-primary", render: () => <PrivacyCard /> },
   { id: "security", labelKey: "security", label: "Security", icon: Shield, iconClass: "text-negative", render: () => <SecurityCard /> },
+  { id: "updates", labelKey: "updates", label: "Updates", icon: DownloadCloud, iconClass: "text-primary", render: () => <UpdatesCard /> },
   { id: "data", labelKey: "data", label: "Data", icon: Database, iconClass: "text-positive", render: () => (<div className="space-y-4"><ExportCard /><RestoreCard /><DangerZoneCard /></div>) },
   { id: "imports", labelKey: "import_from_bank", label: "Import from bank or app", icon: UploadCloud, iconClass: "text-primary", render: () => <ImportCard /> },
   { id: "menu", labelKey: "menu_layout", label: "Sidebar Menu", icon: ListOrdered, iconClass: "text-primary", render: () => <MenuLayoutCard /> },

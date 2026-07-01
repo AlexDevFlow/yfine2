@@ -34,6 +34,8 @@ export interface SettingsRow {
   privacy_hover_reveal: number;
   /** Optional code required to turn privacy mode OFF (reveal). null/empty = no code. */
   privacy_unlock_code: string | null;
+  /** Opt-in (default OFF): on launch, check GitHub releases for a newer version. Manual check always available. */
+  auto_update_check: number;
   saved_views_json: string;
   movement_templates_json: string;
   /** UTC ISO timestamp of the last successful auto/manual price refresh (null = never). */
@@ -56,8 +58,8 @@ export async function getSettings(db: SqlExecutor): Promise<SettingsRow> {
   const ts = now();
   await db.execute(
     `INSERT OR IGNORE INTO settings
-      (id,locale,date_format,base_currency,theme,hide_net_worth,last_source_id,mobile_nav_mode,bottom_nav_size,ui_scale,hotkeys_enabled,hotkeys_json,nav_layout_json,bottom_nav_json,lan_access,portfolio_prices_enabled,portfolio_prices_prompted,portfolio_charts_enabled,privacy_hover_reveal,privacy_unlock_code,saved_views_json,movement_templates_json,created_at,updated_at)
-     VALUES (1,'en','dd/mm/yyyy',NULL,'light',0,NULL,'sidebar','md','normal',1,'{}','[]','[]',0,0,0,0,1,NULL,'[]','[]',?,?)`,
+      (id,locale,date_format,base_currency,theme,hide_net_worth,last_source_id,mobile_nav_mode,bottom_nav_size,ui_scale,hotkeys_enabled,hotkeys_json,nav_layout_json,bottom_nav_json,lan_access,portfolio_prices_enabled,portfolio_prices_prompted,portfolio_charts_enabled,privacy_hover_reveal,privacy_unlock_code,auto_update_check,saved_views_json,movement_templates_json,created_at,updated_at)
+     VALUES (1,'en','dd/mm/yyyy',NULL,'light',0,NULL,'sidebar','md','normal',1,'{}','[]','[]',0,0,0,0,1,NULL,0,'[]','[]',?,?)`,
     [ts, ts],
   );
   return (await db.select<SettingsRow>(`SELECT * FROM settings WHERE id = 1`))[0];
@@ -80,6 +82,7 @@ export interface SettingsPatch {
   portfolio_charts_enabled?: boolean;
   privacy_hover_reveal?: boolean;
   privacy_unlock_code?: string | null;
+  auto_update_check?: boolean;
   saved_views_json?: string;
   movement_templates_json?: string;
   nav_layout_json?: string;
@@ -108,7 +111,7 @@ export async function updateSettings(db: SqlExecutor, patch: SettingsPatch): Pro
   const sets: string[] = [];
   const params: unknown[] = [];
   const set = (c: string, v: unknown) => (sets.push(`${c} = ?`), params.push(v));
-  const bools = new Set(["hide_net_worth", "hotkeys_enabled", "lan_access", "portfolio_prices_enabled", "portfolio_prices_prompted", "portfolio_charts_enabled", "privacy_hover_reveal"]);
+  const bools = new Set(["hide_net_worth", "hotkeys_enabled", "lan_access", "portfolio_prices_enabled", "portfolio_prices_prompted", "portfolio_charts_enabled", "privacy_hover_reveal", "auto_update_check"]);
   for (const [k, v] of Object.entries(patch)) {
     if (v === undefined) continue;
     // Empty base_currency means "no default" → store NULL (matches the original's empty <option>).

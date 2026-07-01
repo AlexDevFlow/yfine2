@@ -41,7 +41,13 @@ export function MultiLineChart({
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const ro = new ResizeObserver((entries) => setW(entries[0].contentRect.width));
+    // Only re-render when the integer pixel width actually changes, so a flurry
+    // of sub-pixel ResizeObserver ticks (e.g. while dragging the window edge)
+    // doesn't trigger a render per tick.
+    const ro = new ResizeObserver((entries) => {
+      const next = entries[0].contentRect.width;
+      setW((prev) => (Math.round(next) !== Math.round(prev) ? next : prev));
+    });
     ro.observe(el);
     setW(el.clientWidth);
     return () => ro.disconnect();

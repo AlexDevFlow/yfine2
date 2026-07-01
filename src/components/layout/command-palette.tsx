@@ -244,6 +244,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
       <div
         role="dialog"
         aria-modal="true"
+        aria-label={t("search", { defaultValue: "Search" })}
         className="yn-slide-down w-full max-w-lg overflow-hidden rounded-[var(--radius-card)] border border-border bg-surface shadow-[var(--shadow-pop)]"
         onMouseDown={(e) => e.stopPropagation()}
         onKeyDown={(e) => {

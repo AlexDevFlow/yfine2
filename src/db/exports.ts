@@ -21,8 +21,43 @@ import * as savings from "./repo/savings";
 import * as whims from "./repo/whims";
 import { netWorthByCurrency, round2 } from "@/domain/money";
 import { todayISO } from "@/lib/date";
+import { version as APP_VERSION } from "../../package.json";
 
 export type SectionKey = "sources" | "movements" | "tags" | "recurring" | "savings" | "whims";
+
+/** Excel display format for monetary cells (Excel renders separators per the OS locale). */
+const MONEY_FMT = "#,##0.00";
+/** Detail-table column headers whose numeric cells are money (vs counts/percentages). */
+const MONEY_HEADERS = new Set(["Amount", "Balance", "Starting"]);
+/** A summary label ending in a currency tag, e.g. "Net Worth (EUR)" / "Income (—)". */
+const CURRENCY_LABEL = /\([A-Z]{3}\)$|\(—\)$/;
+
+/**
+ * Tag monetary cells in a freshly built worksheet with a thousands+2dp number
+ * format: every currency-labelled summary value (col B) and every numeric cell in
+ * a money column of the detail table. Counts/percentages are left as-is. `aoa` is
+ * the pre-`safeRow` array (same cell positions as the sheet) used to classify cells.
+ */
+function formatMoneyCells(
+  ws: XLSX.WorkSheet,
+  aoa: (string | number)[][],
+  columns?: string[],
+  columnsRowIndex = -1,
+): void {
+  const set = (r: number, c: number) => {
+    const a = XLSX.utils.encode_cell({ r, c });
+    if (ws[a] && ws[a].t === "n") ws[a].z = MONEY_FMT;
+  };
+  for (let r = 0; r < aoa.length; r++) {
+    if (typeof aoa[r][0] === "string" && CURRENCY_LABEL.test(aoa[r][0] as string) && typeof aoa[r][1] === "number") set(r, 1);
+  }
+  if (columns && columnsRowIndex >= 0) {
+    const moneyCols = columns.map((c, i) => (MONEY_HEADERS.has(c) ? i : -1)).filter((i) => i >= 0);
+    for (let r = columnsRowIndex + 1; r < aoa.length; r++) {
+      for (const c of moneyCols) if (typeof aoa[r][c] === "number") set(r, c);
+    }
+  }
+}
 
 export const EXPORT_SECTIONS: { key: SectionKey; label: string }[] = [
   { key: "sources", label: "Sources" },
@@ -95,6 +130,29 @@ async function buildOverview(db: SqlExecutor, sourceCache: () => Promise<SourceD
   return { title: "Overview", kpis };
 }
 
+/**
+ * Group signed in/out amounts by currency (label fallback "—" for a null currency),
+ * sorted by code. Totals must never be summed ACROSS currencies — €1000 + $500 is
+ * not "1500" — so every monetary summary that spans rows of different currencies
+ * goes through this and is reported per currency.
+ */
+function inOutByCurrency<T>(
+  rows: T[],
+  ccy: (r: T) => string | null,
+  dir: (r: T) => "in" | "out",
+  amt: (r: T) => number,
+): [string, { in: number; out: number }][] {
+  const m = new Map<string, { in: number; out: number }>();
+  for (const r of rows) {
+    const c = ccy(r) ?? "—";
+    const e = m.get(c) ?? { in: 0, out: 0 };
+    if (dir(r) === "in") e.in += amt(r);
+    else e.out += amt(r);
+    m.set(c, e);
+  }
+  return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+}
+
 async function buildSection(db: SqlExecutor, key: SectionKey, sourceCache: () => Promise<SourceData>): Promise<Section> {
   switch (key) {
     case "sources": {
@@ -111,11 +169,18 @@ async function buildSection(db: SqlExecutor, key: SectionKey, sourceCache: () =>
     }
     case "movements": {
       const items = await movements.listMovements(db, {}, { limit: 100000 });
-      const totalIn = round2(items.filter((m) => m.direction === "in").reduce((a, m) => a + m.amount, 0));
-      const totalOut = round2(items.filter((m) => m.direction === "out").reduce((a, m) => a + m.amount, 0));
+      // Transfers move money between own accounts — not income/expense — so they're
+      // excluded from the totals (matching the in-app KPI band / sumMovements, which
+      // filters transfer_pair_id IS NULL). Totals are reported per currency.
+      const counted = items.filter((m) => m.transfer_pair_id == null);
+      const summary: [string, string | number][] = [];
+      for (const [ccy, { in: ti, out: to }] of inOutByCurrency(counted, (m) => m.source_currency, (m) => m.direction, (m) => m.amount)) {
+        summary.push([`Income (${ccy})`, round2(ti)], [`Expense (${ccy})`, round2(to)], [`Net (${ccy})`, round2(ti - to)]);
+      }
+      summary.push(["Movements", items.length]);
       return {
         title: "Movements",
-        summary: [["Income", totalIn], ["Expense", totalOut], ["Net", round2(totalIn - totalOut)], ["Movements", items.length]],
+        summary,
         columns: ["Date", "Direction", "Amount", "Currency", "Account", "Note", "Tags"],
         rows: items.map((m) => [m.date, m.direction, m.amount, m.source_currency ?? "", m.source_name ?? "", m.note ?? "", m.tags.map((t) => t.name).join(", ")]),
       };
@@ -132,44 +197,51 @@ async function buildSection(db: SqlExecutor, key: SectionKey, sourceCache: () =>
     }
     case "recurring": {
       const list = await recurring.listRecurring(db, todayISO());
-      let monthlyIn = 0;
-      let monthlyOut = 0;
-      for (const r of list) {
-        const factor = FREQ_MONTHLY_FACTOR[r.frequency] ?? 1;
-        const monthly = r.amount * factor;
-        if (r.direction === "in") monthlyIn += monthly;
-        else monthlyOut += monthly;
+      // Monthly-equivalent income/expense, per currency (don't cross-sum currencies).
+      const summary: [string, string | number][] = [];
+      for (const [ccy, { in: mi, out: mo }] of inOutByCurrency(list, (r) => r.currency, (r) => r.direction, (r) => r.amount * (FREQ_MONTHLY_FACTOR[r.frequency] ?? 1))) {
+        summary.push([`Monthly income (${ccy})`, round2(mi)], [`Monthly expense (${ccy})`, round2(mo)], [`Monthly net (${ccy})`, round2(mi - mo)]);
       }
+      summary.push(["Recurring", list.length]);
       return {
         title: "Recurring",
-        summary: [
-          ["Monthly income", round2(monthlyIn)],
-          ["Monthly expense", round2(monthlyOut)],
-          ["Monthly net", round2(monthlyIn - monthlyOut)],
-          ["Recurring", list.length],
-        ],
+        summary,
         columns: ["Name", "Direction", "Amount", "Currency", "Frequency", "Next due"],
         rows: list.map((r) => [r.name, r.direction, r.amount, r.currency, r.frequency, r.next_due_date]),
       };
     }
     case "savings": {
       const list = await savings.listSavings(db, { limit: 100000 });
-      const total = round2(list.reduce((a, s) => a + s.amount, 0));
+      const byCcy = new Map<string, number>();
+      for (const s of list) byCcy.set(s.currency, (byCcy.get(s.currency) ?? 0) + s.amount);
+      const summary: [string, string | number][] = [...byCcy.entries()]
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([ccy, total]) => [`Total Saved (${ccy})`, round2(total)] as [string, number]);
+      summary.push(["Savings", list.length]);
       return {
         title: "Savings",
-        summary: [["Total Saved", total], ["Savings", list.length]],
+        summary,
         columns: ["Date", "Amount", "Currency", "From", "Note", "Tags"],
         rows: list.map((s) => [s.date, s.amount, s.currency, s.from_source_name ?? "", s.note ?? "", s.tags.map((t) => t.name).join(", ")]),
       };
     }
     case "whims": {
       const list = await whims.listWhims(db);
-      const pending = round2(list.filter((w) => w.status === "pending").reduce((a, w) => a + w.amount, 0));
-      const purchased = round2(list.filter((w) => w.status === "purchased").reduce((a, w) => a + w.amount, 0));
-      const dismissed = list.filter((w) => w.status === "dismissed").length;
+      const byCcy = new Map<string, { pending: number; purchased: number }>();
+      for (const w of list) {
+        const e = byCcy.get(w.currency) ?? { pending: 0, purchased: 0 };
+        if (w.status === "pending") e.pending += w.amount;
+        else if (w.status === "purchased") e.purchased += w.amount;
+        byCcy.set(w.currency, e);
+      }
+      const summary: [string, string | number][] = [];
+      for (const [ccy, e] of [...byCcy.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+        summary.push([`Pending (${ccy})`, round2(e.pending)], [`Purchased (${ccy})`, round2(e.purchased)]);
+      }
+      summary.push(["Dismissed", list.filter((w) => w.status === "dismissed").length], ["Whims", list.length]);
       return {
         title: "Whims",
-        summary: [["Pending", pending], ["Purchased", purchased], ["Dismissed", dismissed], ["Whims", list.length]],
+        summary,
         columns: ["Name", "Amount", "Currency", "Priority", "Status"],
         rows: list.map((w) => [w.name, w.amount, w.currency, w.priority, w.status]),
       };
@@ -214,18 +286,23 @@ export async function exportExcel(db: SqlExecutor, selected: SectionKey[]): Prom
 
   // Always lead with the Overview sheet (net-worth-by-currency KPIs + counts).
   const overview = await buildOverview(db, sourceCache);
-  const overviewAoa: (string | number)[][] = [["Yfine"], [`Export ${todayISO()}`], [], [overview.title]];
+  const overviewAoa: (string | number)[][] = [["Yfine"], [`v${APP_VERSION} · Export ${todayISO()}`], [], [overview.title]];
   for (const [label, value] of overview.kpis) overviewAoa.push([label, value]);
   overviewAoa.push([], ["Contents"]);
   for (const s of sections) overviewAoa.push([s.title]);
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(overviewAoa.map(safeRow)), overview.title.slice(0, 31));
+  const overviewWs = XLSX.utils.aoa_to_sheet(overviewAoa.map(safeRow));
+  formatMoneyCells(overviewWs, overviewAoa);
+  XLSX.utils.book_append_sheet(wb, overviewWs, overview.title.slice(0, 31));
 
   for (const s of sections) {
     const aoa: (string | number)[][] = [[s.title]];
     for (const [label, value] of s.summary) aoa.push([label, value]);
     aoa.push([]);
+    const columnsRowIndex = aoa.length; // the header row sits right here, before the data
     aoa.push(s.columns, ...s.rows);
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa.map(safeRow)), s.title.slice(0, 31));
+    const ws = XLSX.utils.aoa_to_sheet(aoa.map(safeRow));
+    formatMoneyCells(ws, aoa, s.columns, columnsRowIndex);
+    XLSX.utils.book_append_sheet(wb, ws, s.title.slice(0, 31));
   }
   return new Uint8Array(XLSX.write(wb, { type: "array", bookType: "xlsx" }) as ArrayBuffer);
 }
@@ -234,21 +311,27 @@ export async function exportPdf(db: SqlExecutor, selected: SectionKey[], title =
   const sourceCache = makeSourceCache(db);
   const keys = resolveSections(selected);
   const sections = await collect(db, keys, sourceCache);
+  const generatedAt = new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC";
   const doc = new jsPDF({ orientation: "landscape" });
   doc.setFontSize(18);
   doc.text("Yfine", 14, 16);
   doc.setFontSize(11);
   doc.text(title, 14, 23);
+  // Provenance: when it was produced and the span it covers (exports are all-time).
+  doc.setFontSize(9);
+  doc.setTextColor(120);
+  doc.text(`Generated ${generatedAt} · Yfine v${APP_VERSION} · Period: all dates`, 14, 28);
+  doc.setTextColor(0);
 
   // Cover KPI block: net-worth-by-currency + counts.
   const overview = await buildOverview(db, sourceCache);
   autoTable(doc, {
     head: [["Overview", ""]],
     body: overview.kpis.map(([label, value]) => [label, String(value)]),
-    startY: 28,
+    startY: 33,
     styles: { fontSize: 9 },
     headStyles: { fillColor: [99, 102, 241] },
-    margin: { left: 14, right: 14 },
+    margin: { left: 14, right: 14, bottom: 14 },
   });
   // @ts-expect-error lastAutoTable is augmented on the doc at runtime by the plugin
   let y = (doc.lastAutoTable?.finalY ?? 40) + 10;
@@ -264,21 +347,38 @@ export async function exportPdf(db: SqlExecutor, selected: SectionKey[], title =
         startY: y + 2,
         styles: { fontSize: 8 },
         bodyStyles: { fillColor: [231, 231, 255] },
-        margin: { left: 14, right: 14 },
+        margin: { left: 14, right: 14, bottom: 14 },
       });
       // @ts-expect-error runtime-augmented
       y = (doc.lastAutoTable?.finalY ?? y + 10) + 4;
     }
     autoTable(doc, {
       head: [s.columns],
-      body: s.rows.map((r) => r.map((c) => String(c))),
+      // Same formula-injection guard as the Excel path, so PDF and Excel render
+      // identical cell text (a leading =,+,-,@ is quoted).
+      body: s.rows.map((r) => safeRow(r).map((c) => String(c))),
       startY: y + 2,
       styles: { fontSize: 8 },
       headStyles: { fillColor: [99, 102, 241] },
-      margin: { left: 14, right: 14 },
+      margin: { left: 14, right: 14, bottom: 14 },
     });
     // @ts-expect-error lastAutoTable is augmented on the doc at runtime by the plugin
     y = (doc.lastAutoTable?.finalY ?? y + 20) + 10;
   }
+
+  // Footer on every page (added last, once the total page count is known):
+  // provenance on the left, "Page X of Y" on the right. autoTable's bottom margin
+  // above reserves space so tables never overlap this band.
+  const pageCount = doc.getNumberOfPages();
+  const ph = doc.internal.pageSize.getHeight();
+  const pw = doc.internal.pageSize.getWidth();
+  doc.setFontSize(8);
+  doc.setTextColor(150);
+  for (let i = 1; i <= pageCount; i++) {
+    doc.setPage(i);
+    doc.text(`Generated ${generatedAt} · Yfine v${APP_VERSION}`, 14, ph - 6);
+    doc.text(`Page ${i} of ${pageCount}`, pw - 14, ph - 6, { align: "right" });
+  }
+  doc.setTextColor(0);
   return new Uint8Array(doc.output("arraybuffer"));
 }

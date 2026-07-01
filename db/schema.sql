@@ -124,6 +124,7 @@ CREATE TABLE IF NOT EXISTS settings (
 	portfolio_charts_enabled BOOLEAN NOT NULL DEFAULT 0,
 	privacy_hover_reveal BOOLEAN NOT NULL DEFAULT 1,
 	privacy_unlock_code VARCHAR,
+	auto_update_check BOOLEAN NOT NULL DEFAULT 0,
 	saved_views_json VARCHAR NOT NULL,
 	movement_templates_json VARCHAR NOT NULL,
 	last_price_refresh_at DATETIME,

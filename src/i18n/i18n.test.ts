@@ -32,6 +32,22 @@ function eqSet(a: Set<string>, b: Set<string>): boolean {
   return a.size === b.size && [...a].every((x) => b.has(x));
 }
 
+/** CLDR plural-category suffixes i18next appends to a pluralized key. */
+const PLURAL_SUFFIX = /_(zero|one|two|few|many|other)$/;
+/**
+ * Bases that English pluralizes (has both `<base>_one` and `<base>_other`).
+ * Other languages legitimately add more categories (e.g. Ukrainian `_few`/`_many`)
+ * for these same bases, so those extra keys are NOT orphans.
+ */
+function pluralBases(keys: Set<string>): Set<string> {
+  const bases = new Set<string>();
+  for (const k of keys) {
+    const m = k.match(/^(.*)_other$/);
+    if (m && keys.has(`${m[1]}_one`)) bases.add(m[1]);
+  }
+  return bases;
+}
+
 const parsed = Object.fromEntries(
   LOCALES.map((loc) => [loc, JSON.parse(rawLocale(loc)) as Record<string, string>]),
 ) as Record<string, Record<string, string>>;
@@ -43,15 +59,22 @@ describe("i18n locale files", () => {
     expect(dups, `duplicate keys in ${loc}.json`).toEqual([]);
   });
 
-  it("all locales have exactly the same key set as English", () => {
+  it("all locales have exactly the same key set as English (plural categories aside)", () => {
     const en = new Set(Object.keys(parsed.en));
+    const enPluralBases = pluralBases(en);
+    // A locale key absent from en is a real orphan UNLESS it's an extra CLDR plural
+    // category (e.g. uk `_few`/`_many`) of a base English already pluralizes.
+    const isAllowedExtra = (k: string): boolean => {
+      const m = k.match(PLURAL_SUFFIX);
+      return m != null && enPluralBases.has(k.slice(0, k.length - m[0].length));
+    };
     for (const loc of LOCALES) {
       if (loc === "en") continue;
       const cur = new Set(Object.keys(parsed[loc]));
       const missing = [...en].filter((k) => !cur.has(k));
-      const extra = [...cur].filter((k) => !en.has(k));
+      const extra = [...cur].filter((k) => !en.has(k) && !isAllowedExtra(k));
       expect(missing, `${loc}.json is MISSING keys`).toEqual([]);
-      expect(extra, `${loc}.json has EXTRA keys not in en.json`).toEqual([]);
+      expect(extra, `${loc}.json has EXTRA (non-plural) keys not in en.json`).toEqual([]);
     }
   });
 

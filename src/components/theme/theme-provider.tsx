@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -34,9 +35,23 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     theme === "system" ? systemTheme() : theme,
   );
 
+  const firstRun = useRef(true);
+  const resolvedRef = useRef(resolved);
   useEffect(() => {
     const apply = () => {
       const r = theme === "system" ? systemTheme() : theme;
+      // Fade colours ONLY across a real light<->dark switch: add the transient
+      // `theme-transition` class for ~320ms so globals.css's universal colour
+      // transition is active just for the switch, never permanently (a permanent
+      // `* { transition }` makes scrolling/hover janky in the webview). Skip the
+      // first paint and no-op theme changes (e.g. system→explicit, same value).
+      if (!firstRun.current && r !== resolvedRef.current) {
+        const el = document.documentElement;
+        el.classList.add("theme-transition");
+        window.setTimeout(() => el.classList.remove("theme-transition"), 320);
+      }
+      firstRun.current = false;
+      resolvedRef.current = r;
       setResolved(r);
       document.documentElement.setAttribute("data-theme", r);
     };
