@@ -105,6 +105,12 @@ TradingView when shown.
 
 No accounts, no analytics, no background phone-home.
 
+**Want to reach Yfine from anywhere?** There is no server to expose — and the dev
+preview must never be published — but you can securely remote into the desktop
+where Yfine runs (Cloudflare Tunnel + Zero Trust Access on your own domain, or
+Tailscale). See [docs/remote-access.md](docs/remote-access.md) for a hardened,
+step-by-step setup.
+
 ---
 
 ## Build from source
