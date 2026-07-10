@@ -31,12 +31,33 @@ The binaries are **not code-signed** (this is a free, open-source app), so each 
 shows a one-time "unknown developer" warning on first launch. That's expected — here's
 how to get past it:
 
-### macOS — `Yfine_x.y.z_universal.dmg`
-Universal build (Intel + Apple Silicon). Open the `.dmg`, drag **Yfine** to
-`/Applications`. On first launch macOS blocks it:
+### macOS — one command (recommended)
 
-- **Right-click** the app → **Open** → **Open** in the dialog, **or**
-- run once in Terminal:
+Works on both **Intel** and **Apple Silicon**. Paste into Terminal:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/AlexDevFlow/yfine2/main/scripts/install-macos.sh | bash
+```
+
+It downloads the latest universal `.dmg`, installs **Yfine.app** into `/Applications`
+and opens it — with no Gatekeeper detour, because a file fetched by `curl` never gets
+the quarantine flag in the first place. ([Read the script](scripts/install-macos.sh)
+before running it; that's worth doing for any `curl | bash`.)
+
+Flags go after `-s --`, e.g. `… | bash -s -- --force` to replace an existing install
+without being asked. Also `--dest "$HOME/Applications"`, `--tag v0.1.0`, `--no-launch`.
+
+### macOS — manual `Yfine_x.y.z_universal.dmg`
+
+Universal build (Intel + Apple Silicon). Open the `.dmg`, drag **Yfine** to
+`/Applications`. Since the app is unsigned, macOS blocks the first launch — how you
+unblock it depends on your version:
+
+- **macOS 15 (Sequoia) and later:** open **System Settings → Privacy & Security**,
+  scroll down to **Security**, and click **Open Anyway** next to Yfine. The old
+  Control-click → **Open** shortcut [no longer overrides Gatekeeper](https://developer.apple.com/news/?id=saqachfa).
+- **macOS 14 (Sonoma) and earlier:** **Control-click** the app → **Open** → **Open**.
+- **Any version, from Terminal:**
   ```sh
   xattr -dr com.apple.quarantine /Applications/Yfine.app
   ```
