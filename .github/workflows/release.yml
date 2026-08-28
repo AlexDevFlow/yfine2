@@ -46,9 +46,12 @@ jobs:
       # it). Bump these two together, never one alone.
       - uses: pnpm/action-setup@v4
         with: { version: 11 }
+      # Node 22+ is required by pnpm 11 (it loads `node:sqlite`, absent in
+      # Node 20 — the setup step crashes before installing anything). Raise
+      # this alongside any pnpm major bump above.
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
       # Pinned: rustc 1.96 hits a recursion-limit error compiling the macOS-only
