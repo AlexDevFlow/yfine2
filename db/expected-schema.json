@@ -805,6 +805,20 @@
           "heal_default": null
         },
         {
+          "name": "net_worth_excluded_json",
+          "type": "VARCHAR",
+          "notnull": true,
+          "pk": 0,
+          "heal_default": "'[]'"
+        },
+        {
+          "name": "last_seen_version",
+          "type": "VARCHAR",
+          "notnull": false,
+          "pk": 0,
+          "heal_default": null
+        },
+        {
           "name": "created_at",
           "type": "DATETIME",
           "notnull": true,

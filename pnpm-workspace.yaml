@@ -1,0 +1,10 @@
+# Build scripts are opt-in (pnpm 10+). Kept in sync with the
+# `pnpm.onlyBuiltDependencies` field in package.json, which is what pnpm 10 —
+# and therefore older CI setups — reads instead of this file.
+allowBuilds:
+  # native binding built via node-gyp, required by the tests (src/db/migrate.test.ts)
+  better-sqlite3: true
+  # links the platform binary, required by vite
+  esbuild: true
+  # its postinstall is only a donation message
+  core-js: false

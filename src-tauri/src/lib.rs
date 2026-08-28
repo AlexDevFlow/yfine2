@@ -1,5 +1,7 @@
 mod auth;
+mod biometric;
 mod crypto;
+mod profiles;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -22,6 +24,10 @@ pub fn run() {
     }
 
     builder
+        // Rust-side session password: set on login / set_password /
+        // change_password so the exit path below can re-encrypt without any
+        // help from JS (see auth::RuntimeKey).
+        .manage(auth::RuntimeKey::default())
         .invoke_handler(tauri::generate_handler![
             auth::is_db_encrypted,
             auth::is_password_set,
@@ -31,7 +37,33 @@ pub fn run() {
             auth::change_password,
             auth::remove_password,
             auth::crash_recovery,
+            biometric::biometric_status,
+            profiles::profiles_get,
+            profiles::profile_create,
+            profiles::profile_update,
+            profiles::profile_delete,
+            profiles::profile_set_active,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            // Quit paths never emit the JS window CloseRequested event, so the
+            // auth-bridge close hook can't run — this is the authoritative
+            // encrypt-on-exit path. BOTH arms are required: ExitRequested fires
+            // on last-window-destroy and programmatic exit/restart, but macOS
+            // Cmd+Q / File→Quit goes through AppKit `terminate:` → tao emits
+            // only LoopDestroyed → tauri maps it straight to RunEvent::Exit
+            // WITHOUT an ExitRequested first. During Exit (inside
+            // applicationWillTerminate) the async runtime is still alive, so
+            // the synchronous encrypt completes before the process dies.
+            // encrypt_on_exit is idempotent (take_runtime_key → None on the
+            // second call), so hitting both arms — or the JS fast path having
+            // already encrypted — is a no-op.
+            if matches!(
+                event,
+                tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
+            ) {
+                auth::encrypt_on_exit(app);
+            }
+        });
 }

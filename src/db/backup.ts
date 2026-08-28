@@ -12,6 +12,14 @@ import { unzipSync, zipSync, strToU8, strFromU8 } from "fflate";
 import type { SqlExecutor } from "./types";
 import { withTx } from "./tx";
 import { isTauri } from "@/lib/tauri";
+import expectedSchema from "../../db/expected-schema.json";
+
+const EXPECTED = expectedSchema as {
+  tables: Record<
+    string,
+    { columns: { name: string; notnull: boolean; heal_default: string | null }[] }
+  >;
+};
 
 // Parents-first insert order; delete is the reverse (children-first).
 const CORE_TABLES = [
@@ -39,8 +47,12 @@ const DEFAULT_TAGS = [
 /**
  * Filesystem seam for attachment blobs so the archive can bundle/restore the
  * real files on Tauri while staying inert (and testable) in the browser preview
- * and in node tests. Mirrors services/attachments.py: files live flat under
- * $APPDATA/attachments and are addressed by their `stored_name`.
+ * and in node tests. Files live under the ACTIVE profile's subdir —
+ * $APPDATA/attachments/<profileId>/ (see repo/attachments.ts attachmentsDir) —
+ * addressed by their `stored_name`; list()/remove() are therefore scoped to
+ * that one profile, so a restore's orphan-prune can never touch another
+ * profile's files. (Archive members keep the flat attachments/<stored_name>
+ * layout for format compatibility.)
  */
 export interface AttachmentFs {
   read(storedName: string): Promise<Uint8Array>;
@@ -58,30 +70,39 @@ const noopAttachmentFs: AttachmentFs = {
   async remove() { /* nothing */ },
 };
 
+/** Archive member prefix (fixed format marker, NOT the on-disk layout). */
 const ATTACH_DIR = "attachments";
+
+/** The active profile's on-disk attachment dir (also runs the legacy-flat migration). */
+async function activeAttachmentsDir(): Promise<string> {
+  const { attachmentsDir } = await import("./repo/attachments");
+  return attachmentsDir();
+}
 
 /** Tauri-backed attachment fs (lazy-imports the fs plugin so tests stay clean). */
 function tauriAttachmentFs(): AttachmentFs {
   return {
     async read(storedName) {
       const { BaseDirectory, readFile } = await import("@tauri-apps/plugin-fs");
-      return readFile(`${ATTACH_DIR}/${storedName}`, { baseDir: BaseDirectory.AppData });
+      return readFile(`${await activeAttachmentsDir()}/${storedName}`, { baseDir: BaseDirectory.AppData });
     },
     async write(storedName, bytes) {
       const { BaseDirectory, mkdir, writeFile } = await import("@tauri-apps/plugin-fs");
-      await mkdir(ATTACH_DIR, { baseDir: BaseDirectory.AppData, recursive: true });
-      await writeFile(`${ATTACH_DIR}/${storedName}`, bytes, { baseDir: BaseDirectory.AppData });
+      const dir = await activeAttachmentsDir();
+      await mkdir(dir, { baseDir: BaseDirectory.AppData, recursive: true });
+      await writeFile(`${dir}/${storedName}`, bytes, { baseDir: BaseDirectory.AppData });
     },
     async list() {
       const { BaseDirectory, exists, readDir } = await import("@tauri-apps/plugin-fs");
-      if (!(await exists(ATTACH_DIR, { baseDir: BaseDirectory.AppData }))) return [];
-      const entries = await readDir(ATTACH_DIR, { baseDir: BaseDirectory.AppData });
+      const dir = await activeAttachmentsDir();
+      if (!(await exists(dir, { baseDir: BaseDirectory.AppData }))) return [];
+      const entries = await readDir(dir, { baseDir: BaseDirectory.AppData });
       return entries.filter((e) => e.isFile).map((e) => e.name);
     },
     async remove(storedName) {
       const { BaseDirectory, remove } = await import("@tauri-apps/plugin-fs");
       try {
-        await remove(`${ATTACH_DIR}/${storedName}`, { baseDir: BaseDirectory.AppData });
+        await remove(`${await activeAttachmentsDir()}/${storedName}`, { baseDir: BaseDirectory.AppData });
       } catch {
         /* already gone */
       }
@@ -142,13 +163,54 @@ function normalizeVal(v: unknown): unknown {
   return v;
 }
 
+/**
+ * Backups exported by OLDER app versions can lack columns that are NOT NULL
+ * without a DDL default in the current schema (the same drift migrate.ts heals
+ * in live DBs via expected-schema.json's heal_default). Without filling those,
+ * a legacy backup import dies wholesale on "NOT NULL constraint failed".
+ * Returns [column, value] pairs to append for keys the row is missing.
+ */
+const HEAL_COLUMNS: Map<string, [string, unknown][]> = (() => {
+  const m = new Map<string, [string, unknown][]>();
+  for (const [table, def] of Object.entries(EXPECTED.tables)) {
+    const cols: [string, unknown][] = [];
+    for (const c of def.columns) {
+      if (!c.notnull || c.heal_default == null) continue;
+      // heal_default is a SQL literal: 'text' (quoted, '' escapes ') or a bare number.
+      const lit = c.heal_default;
+      const value = lit.startsWith("'") ? lit.slice(1, -1).replace(/''/g, "'") : Number(lit);
+      cols.push([c.name, value]);
+    }
+    if (cols.length) m.set(table, cols);
+  }
+  return m;
+})();
+
+/**
+ * Fill healable columns that are missing from the row OR explicitly null (a
+ * null in a NOT NULL column would abort the whole import; the heal default is
+ * strictly better than failing a legacy restore). Mutates the row in place and
+ * returns the insertable key list.
+ */
+function healRowKeys(table: string, row: Row, cols: Set<string>): string[] {
+  const healable = HEAL_COLUMNS.get(table);
+  if (healable) {
+    for (const [name, value] of healable) {
+      if (cols.has(name) && (!(name in row) || row[name] == null)) row[name] = value;
+    }
+  }
+  return Object.keys(row).filter((k) => cols.has(k));
+}
+
 async function clearAndInsert(db: SqlExecutor, table: string, rows: Row[]): Promise<void> {
   await db.execute(`DELETE FROM ${table}`);
   if (!rows.length) return;
   const cols = await tableColumns(db, table);
   for (const row of rows) {
-    const keys = Object.keys(row).filter((k) => cols.has(k));
-    if (!keys.length) continue;
+    // Skip rows with no recognizable columns BEFORE healing, so a stray empty
+    // object can't materialize a phantom all-defaults row.
+    if (!Object.keys(row).some((k) => cols.has(k))) continue;
+    const keys = healRowKeys(table, row, cols);
     const ph = keys.map(() => "?").join(",");
     await db.execute(
       `INSERT INTO ${table} (${keys.join(",")}) VALUES (${ph})`,
@@ -168,8 +230,8 @@ async function insertMovementsDeferred(db: SqlExecutor, rows: Row[]): Promise<vo
   const cols = await tableColumns(db, "movements");
   const links: { id: unknown; pair: unknown }[] = [];
   for (const row of rows) {
-    const keys = Object.keys(row).filter((k) => cols.has(k));
-    if (!keys.length) continue;
+    if (!Object.keys(row).some((k) => cols.has(k))) continue;
+    const keys = healRowKeys("movements", row, cols);
     const ph = keys.map(() => "?").join(",");
     const vals = keys.map((k) => (k === "transfer_pair_id" ? null : normalizeVal(row[k])));
     await db.execute(`INSERT INTO movements (${keys.join(",")}) VALUES (${ph})`, vals);

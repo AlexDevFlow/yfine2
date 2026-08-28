@@ -1,17 +1,27 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { ExternalLink } from "lucide-react";
+import { ExternalLink, List, PieChart } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Modal } from "@/components/ui/modal";
+import { BreakdownPanel } from "@/components/breakdown-panel";
 import { useMonthlyMovements, useToggleExclude } from "@/db/queries";
 import { round2 } from "@/domain/money";
 import { cn } from "@/lib/cn";
 import { dayLabel, monthStart, todayISO } from "@/lib/date";
 import { formatMoney } from "@/lib/format";
+import type { MovementFilters } from "@/db/repo/movements";
+
+// The breakdown panel scopes itself by its own period picker (default: this
+// month), so it needs no filters of its own — hoisted to keep the reference stable.
+const NO_FILTERS: MovementFilters = {};
 
 /**
- * Month-detail modal (gap 1, invariants 24-25). Lists every current-month
- * non-transfer movement for a direction (including excluded rows), with:
+ * Month-detail modal (gap 1, invariants 24-25). Opens on the BREAKDOWN tab —
+ * clicking the Income/Expense total is a question about where the money went,
+ * and the charts answer it directly; the row-by-row list is one click away.
+ *
+ * The list tab shows every current-month non-transfer movement for a direction
+ * (including excluded rows), with:
  *  - per-source filter chips that visually hide a source (with its non-excluded
  *    subtotal) — client-only;
  *  - struck-through excluded rows that do NOT count toward the live total;
@@ -22,11 +32,13 @@ export function MonthDetailModal({
   direction,
   primary,
   locale,
+  dateFormat,
   onClose,
 }: {
   direction: "in" | "out" | null;
   primary: string;
   locale?: string;
+  dateFormat?: string | null;
   onClose: () => void;
 }) {
   const { t } = useTranslation();
@@ -34,6 +46,9 @@ export function MonthDetailModal({
   const { data: rows = [], isLoading } = useMonthlyMovements(direction);
   const toggleExclude = useToggleExclude();
   const [hiddenSources, setHiddenSources] = useState<Set<string>>(new Set());
+  const [tab, setTab] = useState<"breakdown" | "list">("breakdown");
+  // Reopening on the other total is a fresh question — start from the charts again.
+  useEffect(() => setTab("breakdown"), [direction]);
 
   const sign = direction === "in" ? "+" : "−";
   const colorClass = direction === "in" ? "text-positive" : "text-negative";
@@ -53,10 +68,18 @@ export function MonthDetailModal({
     () => rows.filter((m) => !hiddenSources.has(m.source_name ?? t("external", { defaultValue: "External" }))),
     [rows, hiddenSources, t],
   );
-  const total = useMemo(
-    () => round2(visibleRows.filter((m) => !m.exclude_from_stats).reduce((s, m) => s + m.amount, 0)),
-    [visibleRows],
-  );
+  // Totals must be computed PER CURRENCY — summing mixed-currency amounts and
+  // labelling them with the dashboard's primary currency is meaningless (mirrors
+  // the movements-calendar net rollup). "" keys rows with no resolvable currency.
+  const totals = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const m of visibleRows) {
+      if (m.exclude_from_stats) continue;
+      const c = m.source_currency ?? "";
+      map.set(c, round2((map.get(c) ?? 0) + m.amount));
+    }
+    return [...map.entries()];
+  }, [visibleRows]);
 
   const toggleSource = (name: string) =>
     setHiddenSources((prev) => {
@@ -85,20 +108,53 @@ export function MonthDetailModal({
       onClose={onClose}
       title={title}
       size="xl"
-      footer={
+      footer={tab === "list" ? (
         <div className="flex w-full items-center justify-between">
           <strong className={cn("num text-sm", colorClass)}>
-            {t("balance", { defaultValue: "Balance" })}: {sign}
-            {formatMoney(total, primary, locale)}
+            {t("balance", { defaultValue: "Balance" })}:{" "}
+            {totals.length === 0
+              ? `${sign}${formatMoney(0, primary, locale)}`
+              : totals.map(([c, v]) => `${sign}${c ? formatMoney(v, c, locale) : v.toFixed(2)}`).join(" · ")}
           </strong>
           <button onClick={goAll} className="inline-flex items-center gap-1 text-xs font-medium text-primary">
             {t("view_all", { defaultValue: "View All" })}
             <ExternalLink className="h-3.5 w-3.5" />
           </button>
         </div>
-      }
+      ) : undefined}
     >
-      {chips.length > 0 && (
+      <div className="mb-3 flex overflow-hidden rounded-[var(--radius-control)] border border-border-strong">
+        {([["breakdown", "breakdown", "Breakdown", PieChart], ["list", "movements", "Movements", List]] as const).map(
+          ([key, i18nKey, fallback, Icon]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setTab(key)}
+              aria-pressed={tab === key}
+              className={cn(
+                "flex h-8 flex-1 items-center justify-center gap-1.5 text-xs font-medium transition-colors",
+                tab === key ? "bg-accent-soft text-primary" : "text-muted hover:bg-surface-2 hover:text-foreground",
+              )}
+            >
+              <Icon className="h-3.5 w-3.5" />
+              {t(i18nKey, { defaultValue: fallback })}
+            </button>
+          ),
+        )}
+      </div>
+
+      {tab === "breakdown" && direction && (
+        <BreakdownPanel
+          baseFilters={NO_FILTERS}
+          initialDirection={direction}
+          defaultPeriod="this_month"
+          locale={locale}
+          dateFormat={dateFormat}
+          onNavigate={onClose}
+        />
+      )}
+
+      {tab === "list" && chips.length > 0 && (
         <div className="mb-3 flex flex-wrap gap-1.5">
           {chips.map(([name, subtotal]) => {
             const off = hiddenSources.has(name);
@@ -119,13 +175,17 @@ export function MonthDetailModal({
         </div>
       )}
 
-      {isLoading ? (
+      {tab === "list" && (isLoading ? (
         <p className="py-6 text-center text-sm text-muted">{t("loading", { defaultValue: "Loading…" })}</p>
       ) : visibleRows.length === 0 ? (
         <p className="py-6 text-center text-sm text-muted">{t("no_movements", { defaultValue: "No movements yet." })}</p>
       ) : (
         <ul className="divide-y divide-border">
-          {visibleRows.map((m) => (
+          {visibleRows.map((m) => {
+            // Each row renders in its OWN source currency (plain figure when the
+            // source is external/unknown), like the calendar day list.
+            const ccy = m.source_currency ?? undefined;
+            return (
             <li
               key={m.id}
               className={cn(
@@ -144,7 +204,7 @@ export function MonthDetailModal({
               <div className="flex shrink-0 items-center gap-3">
                 <span className={cn("num text-sm font-semibold", colorClass)}>
                   {sign}
-                  {formatMoney(m.amount, primary, locale)}
+                  {ccy ? formatMoney(m.amount, ccy, locale) : m.amount.toFixed(2)}
                 </span>
                 <label className="flex items-center" title={t("exclude_from_stats", { defaultValue: "Exclude from stats" })}>
                   <input
@@ -155,9 +215,10 @@ export function MonthDetailModal({
                 </label>
               </div>
             </li>
-          ))}
+            );
+          })}
         </ul>
-      )}
+      ))}
     </Modal>
   );
 }

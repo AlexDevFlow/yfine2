@@ -33,7 +33,8 @@
 
 <h6>What you see</h6>
 <ul>
-  <li>A <strong>Live Prices</strong> toggle at the top. When on, prices refresh automatically every 30 minutes. When off, Yfine only shows cost basis.</li>
+  <li>Live prices are switched on in <strong>Settings &rarr; Portfolios</strong>. While they are off, a banner reminds you that the totals are cost basis, not market value.</li>
+  <li>An <strong>Exchange rates</strong> button, for valuing holdings priced in a currency other than the portfolio's base.</li>
   <li>A <strong>Refresh</strong> button to force a price update right now (disabled when Live Prices is off).</li>
   <li>Portfolios grouped by their linked <strong>source</strong>, with each source showing a total investment value.</li>
   <li>Each portfolio card: name, <strong>kind badge</strong> (crypto, stocks, mixed), total value, invested cost, <strong>profit or loss</strong> with percentage, number of holdings, and a 30-day sparkline.</li>
@@ -52,7 +53,7 @@
     <span class="yn-help-action-icon info"><i class="bi bi-toggle-on"></i></span>
     <div class="yn-help-action-body">
       <span class="yn-help-action-label">Live Prices toggle</span>
-      <span class="yn-help-action-desc">Turn on to fetch prices from the internet every 30 minutes. Off keeps everything manual.</span>
+      <span class="yn-help-action-desc">Turn on to fetch prices from the internet every 15 minutes. Off keeps everything manual.</span>
     </div>
   </div>
   <div class="yn-help-action">
@@ -99,6 +100,20 @@
 <h6>Base currency</h6>
 <p>The base currency is the one the portfolio reports totals in. Individual holdings can be priced in any currency, and Yfine converts them to the base. The source's currency is the natural choice, but you can pick any.</p>
 
+<h6>Exchange rates</h6>
+<p>Converting needs a rate, and Yfine never invents one. A holding it cannot convert is <strong>left out of the total</strong> and the card says so &mdash; a mixed-currency sum would be a meaningless number.</p>
+<p>The <span class="yn-help-chip"><i class="bi bi-coin"></i> Exchange rates</span> button (also Settings &rarr; Currencies) is where rates come from:</p>
+<ul>
+  <li><strong>Update rates online</strong> fetches them from the European Central Bank, plus CoinGecko for crypto.</li>
+  <li>Or type a pair by hand. A pair reads: 1 of the first currency = rate of the second. A hand-typed rate always wins over a fetched one.</li>
+  <li>You only need one rate per currency. Missing pairs are derived from the ones you have &mdash; EUR&rarr;USD and EUR&rarr;GBP give you USD&rarr;GBP.</li>
+</ul>
+<p>With live prices on, rates also refresh by themselves every 12 hours.</p>
+
+<h6>TradingView charts</h6>
+<p>With charts enabled (Settings &rarr; Portfolios), each holding gets a chart button that embeds a TradingView chart. The <i class="bi bi-arrows-fullscreen"></i> button in the chart's header gives it the whole window &mdash; the chart's own fullscreen control cannot work, because the app's webview keeps that browser API switched off.</p>
+<p>The symbol shown is a guess (crypto gets a USD quote). If it resolves to the wrong market, change it inside the chart.</p>
+
 <h6>Live prices and privacy</h6>
 <p>Live prices fetch data from public APIs. Keeping it off means no network calls happen for portfolios, and you enter every price by hand. A warning banner reminds you when prices are off, because the totals you see are cost basis, not market value.</p>
 
@@ -115,7 +130,7 @@
   <li>Enter the <strong>symbol</strong> (BTC, ETH, AAPL). For mixed portfolios, pick the asset class first.</li>
   <li>Enter the <strong>quantity</strong>, the <strong>average cost</strong>, and the <strong>currency</strong>.</li>
   <li>Optional: toggle <strong>manual price</strong> if you do not want Yfine to fetch it.</li>
-  <li>Save. The holding appears in the table and the portfolio totals update.</li>
+  <li>Save. The holding appears in the table, its price is fetched straight away (when live prices are on), and the portfolio totals update.</li>
 </ol>
 
 <h6>Profit and loss</h6>

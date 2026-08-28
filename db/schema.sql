@@ -128,6 +128,8 @@ CREATE TABLE IF NOT EXISTS settings (
 	saved_views_json VARCHAR NOT NULL,
 	movement_templates_json VARCHAR NOT NULL,
 	last_price_refresh_at DATETIME,
+	net_worth_excluded_json VARCHAR NOT NULL DEFAULT '[]',
+	last_seen_version VARCHAR,
 	created_at DATETIME NOT NULL,
 	updated_at DATETIME NOT NULL,
 	PRIMARY KEY (id)

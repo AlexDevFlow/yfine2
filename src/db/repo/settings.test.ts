@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { makeMemDb } from "@/test/sqlite";
-import { getSettings, updateSettings } from "./settings";
+import { getSettings, hasUserData, parseNetWorthExcluded, updateSettings } from "./settings";
 
 describe("settings repo", () => {
   it("lazily creates the singleton row with defaults", async () => {
@@ -86,5 +86,67 @@ describe("settings repo", () => {
     const { db } = await makeMemDb();
     await expect(updateSettings(db, { base_currency: "ZZZ" })).rejects.toBeTruthy();
     await expect(updateSettings(db, { base_currency: "gbp" })).rejects.toBeTruthy();
+  });
+});
+
+describe("net-worth account selection + release-notes stamp", () => {
+  it("defaults to counting every account and round-trips an exclusion", async () => {
+    const { db } = await makeMemDb();
+    expect((await getSettings(db)).net_worth_excluded_json).toBe("[]");
+    const s = await updateSettings(db, { net_worth_excluded_json: JSON.stringify([2, 5]) });
+    expect(parseNetWorthExcluded(s.net_worth_excluded_json)).toEqual([2, 5]);
+  });
+
+  it("parses defensively: a corrupt or foreign value means 'exclude nothing'", () => {
+    expect(parseNetWorthExcluded(null)).toEqual([]);
+    expect(parseNetWorthExcluded("")).toEqual([]);
+    expect(parseNetWorthExcluded("not json")).toEqual([]);
+    expect(parseNetWorthExcluded('{"a":1}')).toEqual([]);
+    // Mixed junk keeps only the usable ids rather than throwing the lot away.
+    expect(parseNetWorthExcluded('[1,"2",null,3]')).toEqual([1, 3]);
+  });
+
+  it("starts with no seen version so a fresh install is stamped, not popped up at", async () => {
+    const { db } = await makeMemDb();
+    expect((await getSettings(db)).last_seen_version).toBeNull();
+    expect((await updateSettings(db, { last_seen_version: "0.2.0" })).last_seen_version).toBe("0.2.0");
+  });
+});
+
+describe("hasUserData (fresh install vs upgrade)", () => {
+  it("is false on an empty profile and true once an account exists", async () => {
+    const { db } = await makeMemDb();
+    expect(await hasUserData(db)).toBe(false);
+    await db.execute(
+      `INSERT INTO sources (name,currency,starting_balance,exclude_from_stats,is_savings_fund,hidden_from_sources,yield_rate,yield_period_months,created_at,updated_at)
+       VALUES ('A','EUR',0,0,0,0,0,12,'t','t')`,
+    );
+    expect(await hasUserData(db)).toBe(true);
+  });
+});
+
+describe("new-profile language inheritance", () => {
+  it("seeds a fresh profile with the language the user is working in", async () => {
+    const { db } = await makeMemDb();
+    expect((await getSettings(db, { locale: "it" })).locale).toBe("it");
+  });
+
+  it("accepts a regional tag through its base language", async () => {
+    const { db } = await makeMemDb();
+    expect((await getSettings(db, { locale: "es-MX" })).locale).toBe("es");
+  });
+
+  it("falls back to English for an unknown or missing language", async () => {
+    const { db: a } = await makeMemDb();
+    expect((await getSettings(a, { locale: "klingon" })).locale).toBe("en");
+    const { db: b } = await makeMemDb();
+    expect((await getSettings(b)).locale).toBe("en");
+  });
+
+  it("never overwrites the language of a profile that already has one", async () => {
+    const { db } = await makeMemDb();
+    await getSettings(db, { locale: "it" });
+    // A later read in another language must not flip the stored preference.
+    expect((await getSettings(db, { locale: "uk" })).locale).toBe("it");
   });
 });

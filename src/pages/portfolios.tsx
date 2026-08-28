@@ -1,6 +1,7 @@
-import { Layers, Loader2, Plus, TrendingDown, TrendingUp, Trash2, Pencil, AlertTriangle, CandlestickChart, LineChart as LineChartIcon, RefreshCw } from "lucide-react";
+import { Coins, Layers, Loader2, Maximize2, Minimize2, Plus, TrendingDown, TrendingUp, Trash2, Pencil, AlertTriangle, CandlestickChart, LineChart as LineChartIcon, RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link } from "@tanstack/react-router";
+import { ExchangeRatesEditor } from "@/components/exchange-rates-editor";
 import { useTranslation } from "react-i18next";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -137,6 +138,7 @@ function HoldingHistoryModal({ holding, locale, onClose }: { holding: EnrichedHo
  */
 function HoldingChartModal({ holding, onClose }: { holding: EnrichedHolding; onClose: () => void }) {
   const { t, i18n } = useTranslation();
+  const [expanded, setExpanded] = useState(false);
   const dark = typeof document !== "undefined" && document.documentElement.getAttribute("data-theme") === "dark";
   const tvSymbol = holding.asset_class === "crypto" ? `${holding.symbol}USD` : holding.symbol;
   const params = new URLSearchParams({
@@ -152,19 +154,40 @@ function HoldingChartModal({ holding, onClose }: { holding: EnrichedHolding; onC
   });
   const src = `https://s.tradingview.com/widgetembed/?${params.toString()}`;
   return (
-    <Modal open onClose={onClose} size="xl" title={`${holding.symbol}${holding.display_name ? " · " + holding.display_name : ""}`}>
-      <div className="h-[60vh] w-full overflow-hidden rounded-[var(--radius-control)] border border-border">
+    <Modal
+      open
+      onClose={onClose}
+      size={expanded ? "full" : "xl"}
+      title={
+        <span className="flex items-center gap-2">
+          {holding.symbol}{holding.display_name ? ` · ${holding.display_name}` : ""}
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            aria-label={expanded ? t("shrink", { defaultValue: "Shrink" }) : t("enlarge", { defaultValue: "Enlarge" })}
+            title={expanded ? t("shrink", { defaultValue: "Shrink" }) : t("enlarge", { defaultValue: "Enlarge" })}
+            className="rounded-md p-1 text-muted hover:bg-surface-2 hover:text-foreground"
+          >
+            {expanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+          </button>
+        </span>
+      }
+    >
+      <div className={cn("w-full overflow-hidden rounded-[var(--radius-control)] border border-border", expanded ? "h-full" : "h-[60vh]")}>
         <iframe
           title={`TradingView ${holding.symbol}`}
           src={src}
           className="h-full w-full border-0"
+          allow="fullscreen"
           allowFullScreen
           referrerPolicy="no-referrer"
         />
       </div>
-      <p className="mt-2 text-xs text-muted-2">
-        {t("tradingview_note", { defaultValue: "Charts by TradingView. The shown symbol may differ from your holding's exchange — change it in the chart if needed." })}
-      </p>
+      {!expanded && (
+        <p className="mt-2 text-xs text-muted-2">
+          {t("tradingview_note", { defaultValue: "Charts by TradingView. The shown symbol may differ from your holding's exchange — change it in the chart if needed." })}
+        </p>
+      )}
     </Modal>
   );
 }
@@ -383,13 +406,14 @@ function HoldingForm({ portfolioId, kind, base, initial, onCancel, onSubmit, pen
 
 /** Cross-portfolio overview: aggregate totals, asset-class allocation donut, and the
  *  sort / group-by controls that drive every holdings table below. */
-function OverviewCard({ overview, sortKey, setSortKey, grouped, setGrouped, locale }: {
+function OverviewCard({ overview, sortKey, setSortKey, grouped, setGrouped, locale, onOpenRates }: {
   overview: PortfoliosOverview;
   sortKey: SortKey;
   setSortKey: (k: SortKey) => void;
   grouped: boolean;
   setGrouped: (fn: (g: boolean) => boolean) => void;
   locale?: string;
+  onOpenRates: () => void;
 }) {
   const { t } = useTranslation();
   const o = overview;
@@ -416,7 +440,7 @@ function OverviewCard({ overview, sortKey, setSortKey, grouped, setGrouped, loca
               {t("n_portfolios", { defaultValue: "{{n}} portfolios", n: o.portfolio_count })} · {t("n_holdings", { defaultValue: "{{n}} holdings", n: o.holding_count })}
             </p>
             {o.has_unconverted && (
-              <p className="mt-2 flex items-center gap-1.5 text-xs text-warning"><AlertTriangle className="h-3.5 w-3.5" />{t("missing_fx", { defaultValue: "Some holdings use a currency with no exchange rate — totals may be approximate." })}</p>
+              <p className="mt-2 flex items-center gap-1.5 text-xs text-warning"><AlertTriangle className="h-3.5 w-3.5" />{t("missing_fx", { defaultValue: "Some holdings use a currency with no exchange rate — totals may be approximate." })} <button type="button" onClick={onOpenRates} className="font-medium text-primary hover:underline">{t("missing_fx_link", { defaultValue: "Add exchange rates" })}</button></p>
             )}
             {o.holding_count > 0 && (
               <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-border pt-3">
@@ -667,6 +691,7 @@ export function PortfoliosPage() {
   };
 
   const [pForm, setPForm] = useState(false);
+  const [fxOpen, setFxOpen] = useState(false);
   const [hForm, setHForm] = useState<{ portfolio: PortfolioSummary; editing?: EnrichedHolding }>();
   const [historyHolding, setHistoryHolding] = useState<EnrichedHolding>();
   const [chartHolding, setChartHolding] = useState<EnrichedHolding>();
@@ -696,7 +721,6 @@ export function PortfoliosPage() {
               )}
               <Button
                 variant="outline"
-                size="sm"
                 onClick={() => { refreshAll.mutate(); }}
                 disabled={refreshAll.isPending}
                 title={t("refresh_prices", { defaultValue: "Refresh prices" })}
@@ -706,6 +730,9 @@ export function PortfoliosPage() {
               </Button>
             </div>
           )}
+          <Button variant="outline" onClick={() => setFxOpen(true)} title={t("exchange_rates", { defaultValue: "Exchange rates" })}>
+            <Coins className="h-4 w-4" /> {t("exchange_rates", { defaultValue: "Exchange rates" })}
+          </Button>
           <Button onClick={() => { setErr(undefined); setPForm(true); }} disabled={(sources?.length ?? 0) === 0}><Plus className="h-4 w-4" /> {t("new_portfolio", { defaultValue: "New Portfolio" })}</Button>
         </div>
       </div>
@@ -719,7 +746,7 @@ export function PortfoliosPage() {
       {list && list.length === 0 && <Card className="p-10 text-center text-sm text-muted">{t("no_portfolios", { defaultValue: "No portfolios yet." })}</Card>}
 
       {overview && overview.holding_count > 0 && (
-        <OverviewCard overview={overview} sortKey={sortKey} setSortKey={setSortKey} grouped={grouped} setGrouped={setGrouped} locale={locale} />
+        <OverviewCard overview={overview} sortKey={sortKey} setSortKey={setSortKey} grouped={grouped} setGrouped={setGrouped} locale={locale} onOpenRates={() => setFxOpen(true)} />
       )}
 
       {(list ?? []).map((p) => (
@@ -746,7 +773,7 @@ export function PortfoliosPage() {
               </div>
             )}
             {p.has_unconverted && (
-              <p className="mb-2 flex items-center gap-1.5 text-xs text-warning"><AlertTriangle className="h-3.5 w-3.5" />{t("missing_fx", { defaultValue: "Some holdings use a currency with no exchange rate — totals may be approximate." })}</p>
+              <p className="mb-2 flex items-center gap-1.5 text-xs text-warning"><AlertTriangle className="h-3.5 w-3.5" />{t("missing_fx", { defaultValue: "Some holdings use a currency with no exchange rate — totals may be approximate." })} <button type="button" onClick={() => setFxOpen(true)} className="font-medium text-primary hover:underline">{t("missing_fx_link", { defaultValue: "Add exchange rates" })}</button></p>
             )}
             {p.holdings.length > 0 ? (
               <PortfolioHoldings
@@ -770,6 +797,11 @@ export function PortfoliosPage() {
           </CardContent>
         </Card>
       ))}
+
+      <Modal open={fxOpen} onClose={() => setFxOpen(false)} title={t("exchange_rates", { defaultValue: "Exchange rates" })} size="lg">
+        <p className="mb-3 text-xs text-muted">{t("exchange_rates_desc", { defaultValue: "Needed to value multi-currency portfolios, the consolidated net worth and cross-currency transfers. A pair reads: 1 of the first currency = rate of the second." })}</p>
+        <ExchangeRatesEditor />
+      </Modal>
 
       <Modal open={pForm} onClose={() => setPForm(false)} title={t("new_portfolio", { defaultValue: "New Portfolio" })}>
         <PortfolioForm sources={sources ?? []} pending={createP.isPending} error={err} onCancel={() => setPForm(false)} onSubmit={(v) => createP.mutate(v, { onSuccess: () => setPForm(false), onError: (e) => setErr(errText(e)) })} />

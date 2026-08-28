@@ -6790,7 +6790,7 @@ dependencies = [
 
 [[package]]
 name = "yfine2"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",
@@ -6800,6 +6800,7 @@ dependencies = [
  "openssl",
  "pbkdf2",
  "rand 0.8.6",
+ "security-framework",
  "serde",
  "serde_json",
  "sha2",

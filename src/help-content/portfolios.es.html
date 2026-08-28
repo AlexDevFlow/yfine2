@@ -33,7 +33,8 @@
 
 <h6>Qué ves</h6>
 <ul>
-  <li>Un interruptor de <strong>Precios en vivo</strong> arriba. Cuando está activo, los precios se refrescan automáticamente cada 30 minutos. Cuando está apagado, Yfine solo muestra el coste de adquisición.</li>
+  <li>Los precios en vivo se activan en <strong>Ajustes &rarr; Carteras</strong>. Mientras están apagados, un aviso recuerda que los totales son el coste de adquisición, no el valor de mercado.</li>
+  <li>Un botón de <strong>Tipos de cambio</strong>, para valorar posiciones en una divisa distinta a la base de la cartera.</li>
   <li>Un botón de <strong>Actualizar</strong> para forzar ya una actualización de precios (desactivado con Precios en vivo apagado).</li>
   <li>Carteras agrupadas por su <strong>fuente</strong> enlazada, con el total de inversión mostrado por cada fuente.</li>
   <li>Cada tarjeta de cartera: nombre, <strong>distintivo de tipo</strong> (cripto, acciones, mixto), valor total, coste invertido, <strong>ganancia o pérdida</strong> con porcentaje, número de posiciones y una minigráfica de 30 días.</li>
@@ -52,7 +53,7 @@
     <span class="yn-help-action-icon info"><i class="bi bi-toggle-on"></i></span>
     <div class="yn-help-action-body">
       <span class="yn-help-action-label">Interruptor Precios en vivo</span>
-      <span class="yn-help-action-desc">Actívalo para obtener precios de internet cada 30 minutos. Apagado mantiene todo manual.</span>
+      <span class="yn-help-action-desc">Actívalo para obtener precios de internet cada 15 minutos. Apagado mantiene todo manual.</span>
     </div>
   </div>
   <div class="yn-help-action">
@@ -99,6 +100,20 @@
 <h6>Moneda base</h6>
 <p>La moneda base es en la que la cartera reporta sus totales. Las posiciones individuales pueden tener precio en cualquier moneda, y Yfine las convierte a la base. La moneda de la fuente es la opción natural, pero puedes elegir cualquiera.</p>
 
+<h6>Tipos de cambio</h6>
+<p>Convertir necesita un tipo, y Yfine nunca se lo inventa. Una posición que no puede convertir se <strong>deja fuera del total</strong> y la tarjeta lo indica: sumar divisas distintas daría un número sin sentido.</p>
+<p>El botón <span class="yn-help-chip"><i class="bi bi-coin"></i> Tipos de cambio</span> (o Ajustes &rarr; Divisas) es de donde salen los tipos:</p>
+<ul>
+  <li><strong>Actualizar tipos en línea</strong> los descarga del Banco Central Europeo, más CoinGecko para las criptomonedas.</li>
+  <li>O escribe tú un par. Se lee: 1 de la primera divisa = tipo de la segunda. Un tipo escrito a mano siempre gana sobre uno descargado.</li>
+  <li>Basta un tipo por divisa. Los pares que faltan se deducen de los que tienes: con EUR&rarr;USD y EUR&rarr;GBP obtienes USD&rarr;GBP.</li>
+</ul>
+<p>Con los precios en vivo activos, los tipos también se actualizan solos cada 12 horas.</p>
+
+<h6>Gráficos de TradingView</h6>
+<p>Con los gráficos activos (Ajustes &rarr; Carteras), cada posición tiene un botón que abre un gráfico de TradingView incrustado. El botón <i class="bi bi-arrows-fullscreen"></i> de la cabecera le da toda la ventana: el control de pantalla completa del propio gráfico no puede funcionar, porque la webview de la app mantiene desactivada esa API del navegador.</p>
+<p>El símbolo mostrado es una suposición (las criptomonedas se cotizan en USD). Si apunta al mercado equivocado, cámbialo dentro del gráfico.</p>
+
 <h6>Precios en vivo y privacidad</h6>
 <p>Los precios en vivo obtienen datos de APIs públicas. Mantenerlos apagados significa que no se hacen llamadas de red para las carteras, e introduces cada precio a mano. Un aviso recuerda cuando los precios están apagados, porque los totales que ves son coste de adquisición, no valor de mercado.</p>
 
@@ -115,7 +130,7 @@
   <li>Introduce el <strong>símbolo</strong> (BTC, ETH, AAPL). Para carteras mixtas, elige primero el tipo de activo.</li>
   <li>Introduce la <strong>cantidad</strong>, el <strong>coste medio</strong> y la <strong>moneda</strong>.</li>
   <li>Opcional: activa <strong>precio manual</strong> si no quieres que Yfine lo obtenga.</li>
-  <li>Guarda. La posición aparece en la tabla y los totales de la cartera se actualizan.</li>
+  <li>Guarda. La posición aparece en la tabla, su precio se obtiene al momento (si los precios en vivo están activos) y los totales de la cartera se actualizan.</li>
 </ol>
 
 <h6>Ganancia y pérdida</h6>

@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync, readdirSync } from "node:fs";
 import { helpCandidates, pageKeyForPath, resolveHelp } from "./help-resolver";
 
 describe("help resolver — page key mapping", () => {
@@ -98,5 +99,50 @@ describe("help resolver — content resolution", () => {
       key: "default.html",
       html: "<h5>def</h5>",
     });
+  });
+});
+
+/**
+ * Help-content integrity. The drawer is written as product documentation, so
+ * stale help is worse than none — and nothing else in the toolchain reads these
+ * files. Two failure modes are cheap to catch: a locale left behind when a page
+ * is updated, and text describing a feature that no longer exists.
+ */
+describe("bundled help content", () => {
+  const dir = new URL("../../help-content/", import.meta.url);
+  const files = readdirSync(dir).filter((f) => f.endsWith(".html"));
+  const pageOf = (f: string) => f.replace(/\.(it|es|uk)\.html$/, "").replace(/\.html$/, "");
+  const pages = [...new Set(files.map(pageOf))];
+  const read = (f: string) => readFileSync(new URL(f, dir), "utf8");
+
+  it("ships every page in all four languages", () => {
+    for (const page of pages) {
+      for (const suffix of ["", ".it", ".es", ".uk"]) {
+        expect(files, `${page}${suffix}.html missing`).toContain(`${page}${suffix}.html`);
+      }
+    }
+  });
+
+  it("keeps the localized versions structurally in step with English", () => {
+    // A section added to one language and forgotten in the others shows up here
+    // as a differing <h6> count.
+    for (const page of pages) {
+      const base = (read(`${page}.html`).match(/<h6>/g) ?? []).length;
+      for (const suffix of [".it", ".es", ".uk"]) {
+        const n = (read(`${page}${suffix}.html`).match(/<h6>/g) ?? []).length;
+        expect(n, `${page}${suffix}.html has ${n} sections vs ${base} in English`).toBe(base);
+      }
+    }
+  });
+
+  it("does not document features this app doesn't have", () => {
+    // Inherited from the Flask original: plugin uploads and LAN serving don't
+    // exist in the desktop build.
+    for (const f of files) {
+      const html = read(f);
+      for (const gone of ["yn-help-action-label\">Plugins", "LAN access", "server port"]) {
+        expect(html.includes(gone), `${f} still mentions "${gone}"`).toBe(false);
+      }
+    }
   });
 });

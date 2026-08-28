@@ -24,8 +24,9 @@ import {
 } from "@/db/queries";
 import type { DeleteAction } from "@/db/repo/sources";
 import { cn } from "@/lib/cn";
-import { dayLabel } from "@/lib/date";
+import { dayLabel, monthLabel } from "@/lib/date";
 import { formatMoney } from "@/lib/format";
+import { round2 } from "@/domain/money";
 
 const sourcesRouteApi = getRouteApi("/sources");
 
@@ -297,7 +298,7 @@ function SourceSparkline({ sourceId, balance, currency, locale }: {
   const points = useMemo(() => (data ?? []).slice(-90), [data]);
   if (!isLoading && points.length < 2) {
     return (
-      <div className="grid h-[72px] place-items-center text-[11px] text-muted-2">
+      <div className="grid h-[84px] place-items-center text-[11px] text-muted-2">
         {t("not_enough_history", { defaultValue: "Not enough history to chart yet." })}
       </div>
     );
@@ -305,10 +306,19 @@ function SourceSparkline({ sourceId, balance, currency, locale }: {
   return (
     <LineChart
       points={points}
-      height={72}
+      height={84}
       color={balance >= 0 ? "var(--positive)" : "var(--negative)"}
       format={(n) => formatMoney(n, currency, locale)}
       formatDate={(d) => dayLabel(d, locale)}
+      // Month rules + labels, exactly like the dashboard's net-worth chart: a
+      // 90-day sparkline is unreadable as an anonymous curve — the dividers say
+      // WHEN the balance moved, not just that it did.
+      monthDividers
+      monthLabel={(d) => {
+        const label = monthLabel(d, locale).split(" ")[0].slice(0, 3);
+        // Year on each January so a range crossing new year stays unambiguous.
+        return d.slice(5, 7) === "01" ? `${label} '${d.slice(2, 4)}` : label;
+      }}
     />
   );
 }
@@ -347,10 +357,20 @@ function SourceCard({
         </div>
 
         <div className="mt-2 flex items-baseline gap-1.5">
-          <span className={cn("num text-2xl font-bold", source.balance < 0 ? "text-negative" : "text-positive")}>
-            {formatMoney(source.balance, source.currency, locale)}
+          <span className={cn("num text-2xl font-bold", source.total_value < 0 ? "text-negative" : "text-positive")}>
+            {formatMoney(source.total_value, source.currency, locale)}
           </span>
         </div>
+        {/* Money parked in a linked portfolio belongs to this account too (net
+            worth already counts it) — show the split so the headline number is
+            explainable rather than surprising. */}
+        {source.portfolio_value !== 0 && (
+          <p className="mt-0.5 truncate text-xs text-muted-2">
+            {t("cash", { defaultValue: "Cash" })}: <span className="num">{formatMoney(source.balance, source.currency, locale)}</span>
+            {" · "}
+            {t("portfolios", { defaultValue: "Portfolios" })}: <span className="num">{formatMoney(source.portfolio_value, source.currency, locale)}</span>
+          </p>
+        )}
 
         <div className="mt-2 flex items-center justify-between gap-2 text-xs text-muted">
           <span className="truncate">
@@ -432,7 +452,7 @@ export function SourcesPage() {
     const groups = [...byCcy.entries()].map(([currency, items]) => ({
       currency,
       items,
-      total: items.reduce((sum, s) => sum + s.balance, 0),
+      total: round2(items.reduce((sum, s) => sum + s.total_value, 0)),
     }));
     return { groups, funds: list.filter((s) => s.is_savings_fund === 1) };
   }, [sources]);

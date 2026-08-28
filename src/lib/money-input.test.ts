@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { evalMoneyExpr, parseMoneyInput } from "@/components/ui/money-input";
+import {
+  evalMoneyExpr,
+  formatMoneyInputValue,
+  parseMoneyInput,
+  sanitizeMoneyInput,
+} from "@/components/ui/money-input";
 
 describe("evalMoneyExpr (math-aware amount input)", () => {
   it("evaluates whitelisted arithmetic", () => {
@@ -47,7 +52,67 @@ describe("evalMoneyExpr (math-aware amount input)", () => {
     expect(evalMoneyExpr("alert(1)")).toBeNull();
     expect(evalMoneyExpr("1+")).toBeNull(); // syntax error
     expect(evalMoneyExpr("1/0")).toBeNull(); // Infinity → null
+    expect(evalMoneyExpr("2(3)")).toBeNull(); // implicit multiplication unsupported
+    expect(evalMoneyExpr("(1+2")).toBeNull(); // unclosed group
+    expect(evalMoneyExpr("1..2")).toBeNull();
     expect(evalMoneyExpr("")).toBeNull();
     expect(evalMoneyExpr("Math.PI")).toBeNull(); // letters blocked by whitelist
+  });
+
+  it("works when dynamic code execution is blocked by the desktop CSP", () => {
+    const nativeDescriptor = Object.getOwnPropertyDescriptor(globalThis, "Function")!;
+    Object.defineProperty(globalThis, "Function", {
+      configurable: true,
+      writable: true,
+      value: () => {
+        throw new EvalError("Refused by Content Security Policy");
+      },
+    });
+    try {
+      expect(evalMoneyExpr("1000")).toBe(1000);
+      expect(evalMoneyExpr("100+25*2")).toBe(150);
+    } finally {
+      Object.defineProperty(globalThis, "Function", nativeDescriptor);
+    }
+  });
+});
+
+describe("evalMoneyExpr — human money typing tolerance (transfer invalid_amount fix)", () => {
+  it("strips currency symbols anywhere", () => {
+    expect(evalMoneyExpr("€50")).toBe(50);
+    expect(evalMoneyExpr("50€")).toBe(50);
+    expect(evalMoneyExpr("50 €")).toBe(50);
+    expect(evalMoneyExpr("$ 1,000.50")).toBe(1000.5);
+  });
+  it("treats digit-gap spaces as thousands grouping", () => {
+    expect(evalMoneyExpr("1 000")).toBe(1000);
+    expect(evalMoneyExpr("1 000 000")).toBe(1000000);
+    expect(evalMoneyExpr("1 000,50")).toBe(1000.5);
+  });
+  it("keeps operator spacing and rejects real garbage", () => {
+    expect(evalMoneyExpr("10 + 5")).toBe(15);
+    expect(evalMoneyExpr("abc")).toBeNull();
+    expect(evalMoneyExpr("50..5")).toBeNull();
+  });
+});
+
+describe("MoneyInput editing and display constraints", () => {
+  it("accepts only characters that can make a supported amount", () => {
+    expect(sanitizeMoneyInput("12,50", "12,5")).toBe("12,50");
+    expect(sanitizeMoneyInput("10 + 5", "10 + ")).toBe("10 + 5");
+    expect(sanitizeMoneyInput("12abc34", "12")).toBe("12");
+    expect(sanitizeMoneyInput("Infinity", "10")).toBe("10");
+    expect(sanitizeMoneyInput("1".repeat(257), "10")).toBe("10");
+  });
+
+  it("cleans pasted currency formatting without merging invalid text", () => {
+    expect(sanitizeMoneyInput("€ 1\u00a0234,50")).toBe(" 1 234,50");
+    expect(parseMoneyInput(sanitizeMoneyInput("€ 1\u00a0234,50"))).toBe(1234.5);
+  });
+
+  it("formats committed amounts for the app locale without ambiguous grouping", () => {
+    expect(formatMoneyInputValue(1234.5, "it-IT")).toBe("1234,50");
+    expect(formatMoneyInputValue(1234.5, "en-US")).toBe("1234.50");
+    expect(formatMoneyInputValue(0.125, "it-IT")).toBe("0,125");
   });
 });

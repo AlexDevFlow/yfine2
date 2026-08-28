@@ -5,6 +5,7 @@ import { createSaving } from "./savings";
 import { createTransfer } from "./movements";
 import { createRecurring } from "./recurring";
 import * as dash from "./dashboard";
+import { createHolding, createPortfolio } from "./portfolios";
 
 describe("dashboard aggregations", () => {
   it("net worth is per-currency and includes funds + excluded sources", async () => {
@@ -131,5 +132,27 @@ describe("dashboard aggregations", () => {
     const phone = up.find((r) => r.name === "Phone")!;
     expect(rent.days_left).toBe(5);
     expect(phone.days_left).toBe(-5); // overdue, still listed
+  });
+});
+
+describe("net worth account selection", () => {
+  it("drops an excluded source AND the portfolios linked to it", async () => {
+    const { db } = await makeMemDb();
+    const keep = await createSource(db, { name: "Keep", currency: "EUR", starting_balance: 1000 });
+    const drop = await createSource(db, { name: "Drop", currency: "EUR", starting_balance: 400 });
+    // A portfolio on the excluded account: "don't count this account" has to take
+    // its investments with it, else the total still moves with the market.
+    const pf = await createPortfolio(db, { name: "PF", kind: "crypto", base_currency: "EUR", source_id: drop.id });
+    await createHolding(db, { portfolio_id: pf, asset_class: "crypto", symbol: "BTC", quantity: 2, avg_cost: 100, currency: "EUR", manual_price: true, last_price: 150 });
+
+    expect((await dash.netWorth(db)).EUR).toBe(1700); // 1000 + 400 + 300
+    expect((await dash.netWorth(db, [drop.id])).EUR).toBe(1000);
+    void keep;
+  });
+
+  it("leaves the total untouched for an unknown id", async () => {
+    const { db } = await makeMemDb();
+    await createSource(db, { name: "A", currency: "EUR", starting_balance: 250 });
+    expect((await dash.netWorth(db, [9999])).EUR).toBe(250);
   });
 });

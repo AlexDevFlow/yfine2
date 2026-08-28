@@ -14,7 +14,7 @@ import { DomainError } from "../errors";
 import { round2 } from "@/domain/money";
 import { resyncYieldSchedule } from "@/domain/yield";
 import { todayISO } from "@/lib/date";
-import { purgeAttachmentFiles } from "./attachments";
+import { stageAttachmentUnlinks } from "./attachments";
 
 const COLS =
   "id,name,currency,starting_balance,exclude_from_stats,is_savings_fund,hidden_from_sources,yield_rate,yield_period_months,yield_next_date,yield_last_date,created_at,updated_at";
@@ -47,6 +47,23 @@ export async function getBalance(db: SqlExecutor, id: number): Promise<number> {
   const rows = await db.select<{ bal: number }>(
     `SELECT ${BALANCE_EXPR} AS bal FROM sources s WHERE s.id = ?`,
     [id],
+  );
+  if (!rows[0]) throw new DomainError("not_found");
+  return round2(rows[0].bal);
+}
+
+/**
+ * Balance as of a given date (inclusive) — what the source actually held then.
+ * Used by yield catch-up so a missed period accrues on the balance of THAT
+ * period, not on money deposited afterwards.
+ */
+export async function getBalanceAsOf(db: SqlExecutor, id: number, dateISO: string): Promise<number> {
+  const rows = await db.select<{ bal: number }>(
+    `SELECT s.starting_balance + COALESCE((
+        SELECT SUM(CASE m.direction WHEN 'in' THEN m.amount ELSE -m.amount END)
+        FROM movements m WHERE m.source_id = s.id AND m.date <= ?), 0) AS bal
+     FROM sources s WHERE s.id = ?`,
+    [dateISO, id],
   );
   if (!rows[0]) throw new DomainError("not_found");
   return round2(rows[0].bal);
@@ -185,6 +202,35 @@ export async function setFundVisibility(
   ]);
 }
 
+/**
+ * After repointing movements onto `targetId`, transfer pairs whose two legs
+ * BOTH landed on the target collapse into self-transfers ("B → B") that the
+ * same_source invariant makes uneditable — and, both legs being equal amounts
+ * in the same currency, they're a balance no-op. Drop both legs plus their
+ * tag/attachment/allocation rows.
+ */
+async function dropSelfTransferPairs(db: SqlExecutor, targetId: number): Promise<void> {
+  const rows = await db.select<{ id: number; transfer_pair_id: number }>(
+    `SELECT m.id, m.transfer_pair_id FROM movements m
+       JOIN movements p ON p.id = m.transfer_pair_id
+      WHERE m.source_id = ? AND p.source_id = ?`,
+    [targetId, targetId],
+  );
+  if (rows.length === 0) return;
+  const ids = new Set<number>();
+  for (const r of rows) {
+    ids.add(r.id);
+    ids.add(r.transfer_pair_id);
+  }
+  const list = [...ids];
+  const ph = list.map(() => "?").join(",");
+  await stageAttachmentUnlinks(db, list);
+  await db.execute(`DELETE FROM goal_allocations WHERE movement_id IN (${ph})`, list);
+  await db.execute(`DELETE FROM movement_tag WHERE movement_id IN (${ph})`, list);
+  await db.execute(`DELETE FROM movement_attachments WHERE movement_id IN (${ph})`, list);
+  await db.execute(`DELETE FROM movements WHERE id IN (${ph})`, list);
+}
+
 export async function mergeSources(
   db: SqlExecutor,
   fromId: number,
@@ -197,6 +243,7 @@ export async function mergeSources(
   if (from.currency !== to.currency) throw new DomainError("cross_currency");
 
   await db.execute(`UPDATE movements SET source_id = ? WHERE source_id = ?`, [toId, fromId]);
+  await dropSelfTransferPairs(db, toId);
   await db.execute(`UPDATE recurring_items SET source_id = ? WHERE source_id = ?`, [toId, fromId]);
   await db.execute(`UPDATE portfolios SET source_id = ? WHERE source_id = ?`, [toId, fromId]);
   // goals.source_id (ON DELETE RESTRICT) and whims.source_id (no ON DELETE) also
@@ -251,6 +298,10 @@ export async function deleteSource(
 ): Promise<void> {
   const s = await getSource(db, id);
   if (!s) throw new DomainError("not_found");
+  // Funds hold savings contributions and goal money; deleting one would orphan
+  // is_savings_contribution legs (or erase them and their partner refunds),
+  // desyncing every savings/goal total. Mirrors fund_not_mergeable above.
+  if (s.is_savings_fund === 1) throw new DomainError("fund_not_deletable");
 
   const activeGoals = await db.select<{ c: number }>(
     `SELECT COUNT(*) AS c FROM goals WHERE source_id = ? AND status = 'active'`,
@@ -263,6 +314,7 @@ export async function deleteSource(
     if (!target) throw new DomainError("not_found");
     if (target.currency !== s.currency) throw new DomainError("cross_currency");
     await db.execute(`UPDATE movements SET source_id = ? WHERE source_id = ?`, [action.targetId, id]);
+    await dropSelfTransferPairs(db, action.targetId);
     await db.execute(`UPDATE recurring_items SET source_id = ? WHERE source_id = ?`, [action.targetId, id]);
     await db.execute(`UPDATE portfolios SET source_id = ? WHERE source_id = ?`, [action.targetId, id]);
     // Non-active goals still reference this source (goals.source_id is NOT NULL with
@@ -311,8 +363,8 @@ export async function deleteSource(
   if (ids.size) {
     const list = [...ids];
     const ph = list.map(() => "?").join(",");
-    // Unlink on-disk attachment files first so nothing is orphaned (best-effort).
-    await purgeAttachmentFiles(db, list);
+    // Stage on-disk attachment files for post-commit unlink so nothing is orphaned.
+    await stageAttachmentUnlinks(db, list);
     await db.execute(`DELETE FROM goal_allocations WHERE movement_id IN (${ph})`, list);
     await db.execute(`DELETE FROM movement_tag WHERE movement_id IN (${ph})`, list);
     await db.execute(`DELETE FROM movement_attachments WHERE movement_id IN (${ph})`, list);

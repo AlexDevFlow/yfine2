@@ -15,10 +15,14 @@ import { Sidebar } from "./sidebar";
 import { Topbar } from "./topbar";
 import { useHotkeys } from "./use-hotkeys";
 import { ExpandableTabs } from "@/components/ui/expandable-tabs";
+import { ChangelogModal } from "@/components/changelog-modal";
 import { HelpDrawer } from "@/components/help/help-drawer";
 import { usePreferences, useUpdatePreferences } from "@/db/queries";
 import { getDb } from "@/db/connection";
-import { maybeRefreshPrices } from "@/db/repo/scheduler";
+import { hasUserData } from "@/db/repo/settings";
+import { maybeRefreshPrices, maybeRefreshRates } from "@/db/repo/scheduler";
+import { changelogFor, releaseNotesAction, type ChangelogEntry } from "@/lib/changelog";
+import { currentVersion } from "@/lib/updater";
 import { applyUiScale } from "@/lib/ui-scale";
 import { isTypingTarget } from "@/lib/hotkeys";
 
@@ -282,6 +286,7 @@ export function AppShell() {
 
   // Apply the saved interface-size preference once it loads from the DB.
   const { data: prefs } = usePreferences();
+  const updatePrefs = useUpdatePreferences();
   const qc = useQueryClient();
   useEffect(() => {
     if (prefs?.ui_scale) applyUiScale(prefs.ui_scale);
@@ -297,9 +302,14 @@ export function AppShell() {
     let cancelled = false;
     const tick = async () => {
       try {
-        const updated = await maybeRefreshPrices(await getDb());
+        const db = await getDb();
+        // Rates first: a holding priced in USD is worthless to an EUR portfolio
+        // total until the USD→EUR rate exists, so refreshing prices without them
+        // would leave the same "approximate total" warning up. Both are throttled
+        // (12h / 10min) and both fail soft.
+        const updated = (await maybeRefreshRates(db)) + (await maybeRefreshPrices(db));
         if (!cancelled && updated > 0) {
-          for (const k of ["portfolios", "dashboard", "consolidated", "history", "sources"]) {
+          for (const k of ["portfolios", "dashboard", "consolidated", "history", "sources", "rates"]) {
             void qc.invalidateQueries({ queryKey: [k] });
           }
         }
@@ -319,6 +329,43 @@ export function AppShell() {
       window.clearInterval(id);
     };
   }, [pricesEnabled, qc]);
+
+  // Release notes: shown once, on the first launch after an update. A profile
+  // that has never recorded a version (fresh install, or an app that predates
+  // this) is stamped silently — the popup is for updates, not for installs.
+  const [changelog, setChangelog] = useState<ChangelogEntry | null>(null);
+  const seenVersion = prefs?.last_seen_version;
+  const prefsLoaded = prefs != null;
+  useEffect(() => {
+    if (!prefsLoaded) return;
+    let cancelled = false;
+    void (async () => {
+      const version = await currentVersion();
+      if (cancelled || !version || version === seenVersion) return;
+      const entry = changelogFor(version);
+      const action = releaseNotesAction({
+        version,
+        seen: seenVersion,
+        hasEntry: entry != null,
+        hasData: await hasUserData(await getDb()),
+      });
+      if (cancelled || action === "skip") return;
+      if (action === "stamp") {
+        updatePrefs.mutate({ last_seen_version: version });
+        return;
+      }
+      setChangelog(entry!);
+    })();
+    return () => { cancelled = true; };
+    // updatePrefs is a stable mutation object; re-running on it would loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefsLoaded, seenVersion]);
+
+  const dismissChangelog = () => {
+    const version = changelog?.version;
+    setChangelog(null);
+    if (version) updatePrefs.mutate({ last_seen_version: version });
+  };
 
   // Mobile navigation mode: "bottom" shows the fixed bottom bar; "sidebar" uses
   // a hamburger-triggered off-canvas sidebar instead (matches the original's
@@ -390,6 +437,14 @@ export function AppShell() {
       <HelpDrawer open={helpOpen} onClose={() => setHelpOpen(false)} />
       <NotificationWatcher />
       <UpdateWatcher />
+      {changelog && (
+        <ChangelogModal
+          entry={changelog}
+          open
+          dateFormat={prefs?.date_format}
+          onClose={dismissChangelog}
+        />
+      )}
     </div>
   );
 }

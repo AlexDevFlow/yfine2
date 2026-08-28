@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Field, Input, Select } from "@/components/ui/input";
 import { DateInput } from "@/components/ui/date-input";
+import { MoneyInput, parseMoneyInput } from "@/components/ui/money-input";
 import { splitTotal, type NewSplit, type SplitLine } from "@/db/repo/splits";
 import { cn } from "@/lib/cn";
 import { todayISO } from "@/lib/date";
@@ -35,9 +36,11 @@ export function SplitForm({
     { amount: "", tagId: "" },
   ]);
 
+  // parseMoneyInput (not Number) so expression / locale-decimal input ("10+5",
+  // "1,5") counts toward the Total instead of being silently dropped as NaN.
   const parsedLines: SplitLine[] = lines
-    .filter((l) => Number(l.amount) > 0)
-    .map((l) => ({ amount: Number(l.amount), tagId: l.tagId ? Number(l.tagId) : null }));
+    .map((l) => ({ amount: parseMoneyInput(l.amount), tagId: l.tagId ? Number(l.tagId) : null }))
+    .filter((l) => l.amount > 0);
   const total = splitTotal(parsedLines);
 
   const setLine = (i: number, patch: Partial<{ amount: string; tagId: string }>) =>
@@ -76,7 +79,7 @@ export function SplitForm({
         </Field>
       </div>
       <Field label={t("note", { defaultValue: "Note" })} htmlFor="sp-note">
-        <Input id="sp-note" value={note} onChange={(e) => setNote(e.target.value)} placeholder={t("split_note_ph", { defaultValue: "e.g. Supermarket" })} />
+        <Input id="sp-note" value={note} onChange={(e) => setNote(e.target.value)} placeholder={t("split_note_ph", { defaultValue: "e.g. Supermarket" })} maxLength={1000} />
       </Field>
 
       <div className="space-y-2">
@@ -87,7 +90,7 @@ export function SplitForm({
               <option value="">{t("no_tag", { defaultValue: "(no category)" })}</option>
               {tags.map((tg) => <option key={tg.id} value={tg.id}>{tg.name}</option>)}
             </Select>
-            <Input type="number" step="0.01" min="0" value={l.amount} onChange={(e) => setLine(i, { amount: e.target.value })} placeholder="0.00" className="num w-28" />
+            <MoneyInput value={l.amount} onValueChange={(v) => setLine(i, { amount: v })} placeholder="0.00" className="num w-28" />
             {lines.length > 1 && (
               <button type="button" onClick={() => setLines((ls) => ls.filter((_, idx) => idx !== i))} className="rounded-md p-2 text-muted hover:text-negative"><X className="h-4 w-4" /></button>
             )}

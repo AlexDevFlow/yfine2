@@ -40,6 +40,10 @@ export interface SettingsRow {
   movement_templates_json: string;
   /** UTC ISO timestamp of the last successful auto/manual price refresh (null = never). */
   last_price_refresh_at: string | null;
+  /** JSON array of source ids left OUT of the net-worth total (and their portfolios). */
+  net_worth_excluded_json: string;
+  /** App version whose release notes were last shown (null = never shown). */
+  last_seen_version: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -54,13 +58,36 @@ const VALID = {
   bottom_nav_size: ["sm", "md", "lg"],
 };
 
-export async function getSettings(db: SqlExecutor): Promise<SettingsRow> {
+/** Languages a fresh profile may be seeded with (mirrors i18n's SUPPORTED_LANGS;
+ *  duplicated here so the repo layer doesn't import the initialized translator). */
+const SEEDABLE_LOCALES = ["en", "it", "es", "uk"];
+
+export interface SettingsDefaults {
+  /** UI language to seed a BRAND-NEW settings row with. Ignored once the row exists. */
+  locale?: string | null;
+}
+
+/**
+ * The singleton preferences row, created on first read.
+ *
+ * `defaults.locale` matters for a new profile: each profile has its own database
+ * and therefore its own settings row, and boot primes the translator FROM that
+ * row — so seeding 'en' would silently flip a user who works in Italian back to
+ * English the moment they create a profile. The caller that knows the current UI
+ * language (the connection bootstrap) passes it in.
+ */
+export async function getSettings(db: SqlExecutor, defaults: SettingsDefaults = {}): Promise<SettingsRow> {
   const ts = now();
+  const seedLocale = (() => {
+    const raw = (defaults.locale ?? "").trim().toLowerCase();
+    const base = raw.split("-")[0];
+    return SEEDABLE_LOCALES.includes(raw) ? raw : SEEDABLE_LOCALES.includes(base) ? base : "en";
+  })();
   await db.execute(
     `INSERT OR IGNORE INTO settings
-      (id,locale,date_format,base_currency,theme,hide_net_worth,last_source_id,mobile_nav_mode,bottom_nav_size,ui_scale,hotkeys_enabled,hotkeys_json,nav_layout_json,bottom_nav_json,lan_access,portfolio_prices_enabled,portfolio_prices_prompted,portfolio_charts_enabled,privacy_hover_reveal,privacy_unlock_code,auto_update_check,saved_views_json,movement_templates_json,created_at,updated_at)
-     VALUES (1,'en','dd/mm/yyyy',NULL,'light',0,NULL,'sidebar','md','normal',1,'{}','[]','[]',0,0,0,0,1,NULL,0,'[]','[]',?,?)`,
-    [ts, ts],
+      (id,locale,date_format,base_currency,theme,hide_net_worth,last_source_id,mobile_nav_mode,bottom_nav_size,ui_scale,hotkeys_enabled,hotkeys_json,nav_layout_json,bottom_nav_json,lan_access,portfolio_prices_enabled,portfolio_prices_prompted,portfolio_charts_enabled,privacy_hover_reveal,privacy_unlock_code,auto_update_check,saved_views_json,movement_templates_json,net_worth_excluded_json,last_seen_version,created_at,updated_at)
+     VALUES (1,?,'dd/mm/yyyy',NULL,'light',0,NULL,'sidebar','md','normal',1,'{}','[]','[]',0,0,0,0,1,NULL,0,'[]','[]','[]',NULL,?,?)`,
+    [seedLocale, ts, ts],
   );
   return (await db.select<SettingsRow>(`SELECT * FROM settings WHERE id = 1`))[0];
 }
@@ -85,6 +112,8 @@ export interface SettingsPatch {
   auto_update_check?: boolean;
   saved_views_json?: string;
   movement_templates_json?: string;
+  net_worth_excluded_json?: string;
+  last_seen_version?: string | null;
   nav_layout_json?: string;
   bottom_nav_json?: string;
   hotkeys_json?: string;
@@ -144,4 +173,23 @@ export async function getLastPriceRefreshAt(db: SqlExecutor): Promise<string | n
 export async function setLastPriceRefreshAt(db: SqlExecutor, when: string = now()): Promise<void> {
   await getSettings(db); // ensure the row exists
   await db.execute(`UPDATE settings SET last_price_refresh_at = ? WHERE id = 1`, [when]);
+}
+
+/** Source ids the user left out of the net-worth total. Tolerates a corrupt value. */
+export function parseNetWorthExcluded(json: string | null | undefined): number[] {
+  try {
+    const v = JSON.parse(json || "[]");
+    return Array.isArray(v) ? v.filter((n): n is number => typeof n === "number") : [];
+  } catch {
+    return [];
+  }
+}
+
+/** True when this profile already holds data — i.e. it's an upgrade rather than
+ *  a fresh install. Used to decide whether release notes are worth showing. */
+export async function hasUserData(db: SqlExecutor): Promise<boolean> {
+  const rows = await db.select<{ c: number }>(
+    `SELECT (SELECT COUNT(*) FROM sources) + (SELECT COUNT(*) FROM movements) AS c`,
+  );
+  return (rows[0]?.c ?? 0) > 0;
 }

@@ -6,7 +6,14 @@ const mk = (
   direction: "in" | "out",
   amount: number,
   transfer = false,
-): GroupableMovement => ({ date, direction, amount, transfer_pair_id: transfer ? 99 : null });
+  excluded = false,
+): GroupableMovement => ({
+  date,
+  direction,
+  amount,
+  transfer_pair_id: transfer ? 99 : null,
+  exclude_from_stats: excluded ? 1 : 0,
+});
 
 describe("groupMovementsHierarchically", () => {
   it("nests year → month → day and totals exclude transfers", () => {

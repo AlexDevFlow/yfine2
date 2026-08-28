@@ -169,10 +169,10 @@ async function buildSection(db: SqlExecutor, key: SectionKey, sourceCache: () =>
     }
     case "movements": {
       const items = await movements.listMovements(db, {}, { limit: 100000 });
-      // Transfers move money between own accounts — not income/expense — so they're
-      // excluded from the totals (matching the in-app KPI band / sumMovements, which
-      // filters transfer_pair_id IS NULL). Totals are reported per currency.
-      const counted = items.filter((m) => m.transfer_pair_id == null);
+      // Transfers move money between own accounts — not income/expense — and
+      // stat-excluded rows opt out of totals, so both stay out of the summary
+      // (matching the in-app KPI band / sumMovements). Totals are per currency.
+      const counted = items.filter((m) => m.transfer_pair_id == null && m.exclude_from_stats !== 1);
       const summary: [string, string | number][] = [];
       for (const [ccy, { in: ti, out: to }] of inOutByCurrency(counted, (m) => m.source_currency, (m) => m.direction, (m) => m.amount)) {
         summary.push([`Income (${ccy})`, round2(ti)], [`Expense (${ccy})`, round2(to)], [`Net (${ccy})`, round2(ti - to)]);

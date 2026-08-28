@@ -134,6 +134,15 @@ export async function createTransfer(db: SqlExecutor, t: NewTransfer): Promise<T
   const from = await getSource(db, t.fromSourceId);
   const to = await getSource(db, t.toSourceId);
   if (!from || !to) throw new DomainError("not_found");
+  // Same-currency legs must match — a differing toAmount would mint money
+  // (mirrors the updateTransfer check; the UI only sends toAmount cross-ccy).
+  if (from.currency === to.currency && t.toAmount != null && t.toAmount !== t.amount)
+    throw new DomainError("invalid_amount");
+  // Funds have dedicated save/withdraw flows that maintain their invariants
+  // (savings.ts / goals.ts call createTransferPair directly); a plain transfer
+  // touching a fund would change its balance with no savings/goal record.
+  if (from.is_savings_fund === 1 || to.is_savings_fund === 1)
+    throw new DomainError("fund_transfer_not_allowed");
   return createTransferPair(db, {
     fromSourceId: t.fromSourceId,
     toSourceId: t.toSourceId,
@@ -163,14 +172,36 @@ export async function updateTransfer(db: SqlExecutor, outLegId: number, patch: T
   const inLeg = await getMovement(db, out.transfer_pair_id);
   if (!inLeg) throw new DomainError("not_found");
 
-  const newFrom = patch.fromSourceId ?? out.source_id!;
-  const newTo = patch.toSourceId ?? inLeg.source_id!;
+  // Savings deposits and goal allocations are transfer pairs too, but they
+  // carry side records (the is_savings_contribution flag, a goal_allocations
+  // row) that a raw pair edit cannot keep in sync — amount/date/source changes
+  // here would desync fund totals and goal progress. Route them to their
+  // dedicated flows instead.
+  if (out.is_savings_contribution === 1 || inLeg.is_savings_contribution === 1)
+    throw new DomainError("is_savings_pair");
+  const alloc = await db.select<{ id: number }>(
+    `SELECT id FROM goal_allocations WHERE movement_id IN (?, ?) LIMIT 1`,
+    [out.id, inLeg.id],
+  );
+  if (alloc.length > 0) throw new DomainError("is_goal_allocation");
+
+  // External legs (source_id NULL, produced by the savings migration) stay
+  // valid: only resolve/validate the sources that are actually set.
+  const newFrom = patch.fromSourceId !== undefined ? patch.fromSourceId : out.source_id;
+  const newTo = patch.toSourceId !== undefined ? patch.toSourceId : inLeg.source_id;
   // BUG-1 fix: a transfer's two legs must sit on different sources.
-  if (newFrom === newTo) throw new DomainError("same_source");
-  const fromSrc = await getSource(db, newFrom);
-  const toSrc = await getSource(db, newTo);
-  if (!fromSrc || !toSrc) throw new DomainError("not_found");
-  const sameCcy = fromSrc.currency === toSrc.currency;
+  if (newFrom != null && newFrom === newTo) throw new DomainError("same_source");
+  const fromSrc = newFrom != null ? await getSource(db, newFrom) : null;
+  const toSrc = newTo != null ? await getSource(db, newTo) : null;
+  if (newFrom != null && !fromSrc) throw new DomainError("not_found");
+  if (newTo != null && !toSrc) throw new DomainError("not_found");
+  // No leg of a plain transfer may sit on (or be re-pointed onto) a fund —
+  // fund balances must only move through the savings/goals flows. Savings and
+  // allocation pairs never reach this point (guards above); goal-close refund
+  // pairs DO have a fund leg and are therefore locked from raw edits too.
+  if (fromSrc?.is_savings_fund === 1 || toSrc?.is_savings_fund === 1)
+    throw new DomainError("fund_transfer_not_allowed");
+  const sameCcy = fromSrc != null && toSrc != null && fromSrc.currency === toSrc.currency;
 
   const outSets: string[] = [];
   const outParams: unknown[] = [];
@@ -193,12 +224,20 @@ export async function updateTransfer(db: SqlExecutor, outLegId: number, patch: T
   if (patch.amount !== undefined) {
     if (!(patch.amount > 0)) throw new DomainError("invalid_amount");
     oset("amount", patch.amount);
-    // mirror onto IN only for same-currency transfers without an explicit toAmount
-    if (patch.toAmount == null && sameCcy) iset("amount", patch.amount);
   }
-  if (patch.toAmount !== undefined && patch.toAmount != null) {
+  const newAmount = patch.amount ?? out.amount;
+  if (patch.toAmount != null) {
     if (!(patch.toAmount > 0)) throw new DomainError("invalid_amount");
+    // Same-currency legs must match — a differing toAmount would mint money.
+    if (sameCcy && patch.toAmount !== newAmount) throw new DomainError("invalid_amount");
     iset("amount", patch.toAmount);
+  } else if (patch.toAmount === null) {
+    // Explicit null = "no converted amount": mirror 1:1, matching create
+    // (transfers.ts falls back to the OUT amount when toAmount is absent).
+    iset("amount", newAmount);
+  } else if (patch.amount !== undefined && sameCcy) {
+    // Partial patch without toAmount: amount edits mirror on same-currency pairs.
+    iset("amount", patch.amount);
   }
 
   oset("updated_at", now());
@@ -358,7 +397,12 @@ export interface EnrichedMovement extends MovementRow {
   tags: { id: number; name: string; color: string | null }[];
 }
 
-function buildFilter(f: MovementFilters): { where: string; params: unknown[] } {
+/**
+ * Shared WHERE builder for every movement query. Exported so the breakdown
+ * repo can aggregate over exactly the same filter vocabulary the list and the
+ * KPI band already use.
+ */
+export function buildFilter(f: MovementFilters): { where: string; params: unknown[] } {
   const cond: string[] = [];
   const params: unknown[] = [];
   if (f.dateFrom && f.dateTo && f.dateFrom > f.dateTo) throw new DomainError("invalid_range");
@@ -434,7 +478,10 @@ export async function sumMovements(
   f: MovementFilters,
 ): Promise<{ totalIn: number; totalOut: number }> {
   const { where, params } = buildFilter(f);
-  const cond = where ? `${where} AND m.transfer_pair_id IS NULL` : "WHERE m.transfer_pair_id IS NULL";
+  // Transfers AND stat-excluded rows stay out of the income/expense totals,
+  // matching dashboard.monthlyFlow / monthlyComparison and budgets.actualFor.
+  const extra = "m.transfer_pair_id IS NULL AND m.exclude_from_stats = 0";
+  const cond = where ? `${where} AND ${extra}` : `WHERE ${extra}`;
   const rows = await db.select<{ direction: "in" | "out"; s: number }>(
     `SELECT m.direction AS direction, COALESCE(SUM(m.amount), 0) AS s
      FROM movements m ${cond} GROUP BY m.direction`,

@@ -34,11 +34,15 @@ async function init(): Promise<SqlExecutor> {
   let exec: SqlExecutor;
   if (isTauri()) {
     const { createPluginSqlExecutor } = await import("./executor-pluginsql");
+    // Open the ACTIVE PROFILE's database (profiles are fully separate DBs;
+    // switching profiles reloads the webview, so this resolves exactly once
+    // per profile session).
+    const { getActiveDbPath } = await import("@/lib/profiles");
     // plugin-sql runs every statement against a 10-connection SQLx pool. Serialize
     // all access so the pool only ever uses ONE connection — otherwise BEGIN/COMMIT
     // scatter across connections (no atomicity) and parked write locks cause 5s
     // "database is locked" stalls. See serializeExecutor / withTx in tx.ts.
-    exec = serializeExecutor((await createPluginSqlExecutor()).exec);
+    exec = serializeExecutor((await createPluginSqlExecutor(await getActiveDbPath())).exec);
     // Use a rollback journal (not WAL): committed data always lives in yfine.db
     // itself, so the Rust encrypt-on-close reads a complete database (no lost
     // transactions stranded in an uncheckpointed -wal). Also makes BEGIN/COMMIT
@@ -57,7 +61,9 @@ async function init(): Promise<SqlExecutor> {
   // language (the i18next localStorage detector would otherwise win). Mirrors the
   // legacy main.py _load_settings_into_i18n startup priming.
   try {
-    const { locale } = await getSettings(exec);
+    // A brand-new profile has no stored locale yet — seed it from the language
+    // the user is currently working in, rather than resetting them to English.
+    const { locale } = await getSettings(exec, { locale: i18n.resolvedLanguage });
     if (locale && i18n.resolvedLanguage !== locale) await i18n.changeLanguage(locale);
   } catch {
     /* never block app boot on locale reconciliation */

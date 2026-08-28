@@ -2,7 +2,10 @@ import { useEffect, useId, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 
-const SIZES = { md: "max-w-md", lg: "max-w-lg", xl: "max-w-2xl" } as const;
+// `full` fills the window: WKWebView keeps the element Fullscreen API switched
+// off, so an embedded chart can never go fullscreen by itself — this is the app
+// giving it the whole window instead.
+const SIZES = { md: "max-w-md", lg: "max-w-lg", xl: "max-w-2xl", full: "max-w-none" } as const;
 
 const FOCUSABLE_SELECTOR =
   'a[href], button, input, select, textarea, [tabindex]:not([tabindex="-1"])';
@@ -50,7 +53,9 @@ export function Modal({
 }: {
   open: boolean;
   onClose: () => void;
-  title: string;
+  /** Plain text in almost every case; a node when the header needs a control
+   *  next to the name (the chart modal's expand toggle). */
+  title: ReactNode;
   children: ReactNode;
   footer?: ReactNode;
   size?: keyof typeof SIZES;
@@ -129,7 +134,7 @@ export function Modal({
         aria-modal="true"
         aria-labelledby={title ? titleId : undefined}
         tabIndex={-1}
-        className={`yn-slide-down flex max-h-[85vh] w-full ${SIZES[size]} flex-col overflow-hidden rounded-[var(--radius-card)] border border-border bg-surface shadow-[var(--shadow-pop)]`}
+        className={`yn-slide-down flex ${size === "full" ? "h-[calc(100dvh-2rem)]" : "max-h-[calc(100dvh-2rem)]"} w-full ${SIZES[size]} flex-col overflow-hidden rounded-[var(--radius-card)] border border-border bg-surface shadow-[var(--shadow-pop)]`}
         onMouseDown={(e) => e.stopPropagation()}
         onKeyDown={onDialogKeyDown}
       >

@@ -1,4 +1,4 @@
-import { ArrowDownLeft, ArrowLeftRight, ArrowUpRight, Briefcase, CalendarClock, Eye, EyeOff, Info, PiggyBank, Plus, Repeat, Rocket, Wallet, X } from "lucide-react";
+import { ArrowDownLeft, ArrowLeftRight, ArrowUpRight, Briefcase, CalendarClock, Eye, EyeOff, Info, PiggyBank, Plus, Repeat, Rocket, SlidersHorizontal, Wallet, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
@@ -29,6 +29,7 @@ import {
   useTags,
   useUpdatePreferences,
 } from "@/db/queries";
+import { parseNetWorthExcluded } from "@/db/repo/settings";
 import { round2 } from "@/domain/money";
 import { cn } from "@/lib/cn";
 import { dayLabel, formatDate, monthLabel } from "@/lib/date";
@@ -36,6 +37,80 @@ import { formatMoney, formatSigned } from "@/lib/format";
 import { useErrorText } from "@/lib/use-error-text";
 
 const MASK = "••••••";
+
+/**
+ * Which accounts feed the net-worth figure. Defaults to all of them; the
+ * selection persists in settings and is honoured by the per-currency totals,
+ * the consolidated total and the history chart alike. Excluding an account also
+ * excludes the portfolios linked to it — otherwise "don't count this account"
+ * would still count its investments.
+ */
+function NetWorthSourcePicker({ excluded, onChange }: {
+  excluded: number[];
+  onChange: (ids: number[]) => void;
+}) {
+  const { t } = useTranslation();
+  const { data: sources } = useSources();
+  const [open, setOpen] = useState(false);
+  const list = sources ?? [];
+  const included = list.filter((s) => !excluded.includes(s.id)).length;
+  const all = list.length;
+
+  const toggle = (id: number) =>
+    onChange(excluded.includes(id) ? excluded.filter((x) => x !== id) : [...excluded, id]);
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        aria-label={t("net_worth_sources", { defaultValue: "Accounts in net worth" })}
+        title={t("net_worth_sources", { defaultValue: "Accounts in net worth" })}
+        aria-expanded={open}
+        className={cn(
+          "grid h-8 w-8 place-items-center rounded-[var(--radius-control)] hover:bg-surface-2 hover:text-foreground",
+          excluded.length > 0 ? "text-primary" : "text-muted",
+        )}
+      >
+        <SlidersHorizontal className="h-4 w-4" />
+      </button>
+      {open && (
+        <>
+          {/* Click-away layer: a plain overlay keeps this dependency-free and
+              still lets the button itself toggle the menu shut. */}
+          <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 top-9 z-40 w-64 rounded-[var(--radius-card)] border border-border bg-surface p-2 shadow-[var(--shadow-pop)]">
+            <div className="flex items-center justify-between px-1.5 pb-1.5">
+              <span className="text-xs font-medium text-muted">
+                {t("net_worth_sources", { defaultValue: "Accounts in net worth" })}
+              </span>
+              <span className="text-[11px] text-muted-2">{included}/{all}</span>
+            </div>
+            <ul className="max-h-64 overflow-y-auto">
+              {list.map((s) => {
+                const on = !excluded.includes(s.id);
+                return (
+                  <li key={s.id}>
+                    <label className="flex cursor-pointer items-center gap-2 rounded-[var(--radius-control)] px-1.5 py-1.5 text-sm hover:bg-surface-2">
+                      <input type="checkbox" checked={on} onChange={() => toggle(s.id)} />
+                      <span className="min-w-0 flex-1 truncate text-foreground">{s.name}</span>
+                      <span className="shrink-0 text-[11px] text-muted-2">{s.currency}</span>
+                    </label>
+                  </li>
+                );
+              })}
+            </ul>
+            {excluded.length > 0 && (
+              <button onClick={() => onChange([])} className="mt-1 w-full rounded-[var(--radius-control)] px-1.5 py-1.5 text-left text-xs font-medium text-primary hover:bg-surface-2">
+                {t("select_all", { defaultValue: "Select all" })}
+              </button>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 
 const RANGES = [
   { key: "30d", days: 30 },
@@ -271,6 +346,9 @@ function QuickCreateModal({ action, onClose }: { action: QuickAction; onClose: (
   const { data: sources } = useSources();
   const { data: tags } = useTags();
   const { data: prefs } = usePreferences();
+  // Transfers must NOT target savings funds (they have a dedicated save/withdraw
+  // flow that maintains fund invariants) — mirrors `realSources` in movements.tsx.
+  const realSources = useMemo(() => (sources ?? []).filter((s) => s.is_savings_fund === 0), [sources]);
 
   const createMovement = useCreateMovement();
   const createTransfer = useCreateTransfer();
@@ -315,7 +393,7 @@ function QuickCreateModal({ action, onClose }: { action: QuickAction; onClose: (
       )}
       {action === "transfer" && (
         <TransferForm
-          sources={sources ?? []}
+          sources={realSources}
           tags={tags ?? []}
           pending={createTransfer.isPending}
           error={error}
@@ -404,6 +482,7 @@ export function Dashboard() {
 
   const hidden = (prefs?.hide_net_worth ?? 0) === 1;
   const toggleHidden = () => updatePrefs.mutate({ hide_net_worth: !hidden });
+  const excludedSources = parseNetWorthExcluded(prefs?.net_worth_excluded_json);
 
   const view = useMemo(() => {
     if (!data) return null;
@@ -479,6 +558,10 @@ export function Dashboard() {
                     {formatSigned(view.net, view.primary, locale)}
                   </Badge>
                 )}
+                <NetWorthSourcePicker
+                  excluded={excludedSources}
+                  onChange={(ids) => updatePrefs.mutate({ net_worth_excluded_json: JSON.stringify(ids) })}
+                />
                 <button
                   onClick={toggleHidden}
                   aria-label={t("toggle_visibility", { defaultValue: "Toggle visibility" })}
@@ -637,7 +720,7 @@ export function Dashboard() {
         </Card>
       </div>
 
-      <MonthDetailModal direction={monthModal} primary={view.primary} locale={locale} onClose={() => setMonthModal(null)} />
+      <MonthDetailModal direction={monthModal} primary={view.primary} locale={locale} dateFormat={prefs?.date_format} onClose={() => setMonthModal(null)} />
     </div>
   );
 }

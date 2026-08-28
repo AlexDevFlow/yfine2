@@ -1,4 +1,4 @@
-import { Briefcase, Database, Download, DownloadCloud, FileSpreadsheet, FileJson, FileText, Keyboard, Languages, ListOrdered, Lock, LogOut, Monitor, Moon, Palette, RefreshCw, Shield, ShieldCheck, Sun, UploadCloud, Upload, FileUp, Undo2, Trash2 } from "lucide-react";
+import { Briefcase, Coins, Database, Fingerprint, Download, DownloadCloud, FileSpreadsheet, FileJson, FileText, Keyboard, Languages, ListOrdered, Lock, LogOut, Monitor, Moon, Palette, RefreshCw, Shield, ShieldCheck, Sun, Upload, FileUp, Undo2, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
@@ -8,11 +8,13 @@ import { Modal } from "@/components/ui/modal";
 import { Slot } from "@/components/ui/slot";
 import {
   armEncryptionForSession,
+  biometricStatus,
   changeAppPassword,
   isPasswordSet,
   removeAppPassword,
   setAppPassword,
   setRuntimePassword,
+  type BiometricStatus,
 } from "@/lib/auth-bridge";
 import { isTauri } from "@/lib/tauri";
 import { useTheme, type Theme } from "@/components/theme/theme-provider";
@@ -31,6 +33,9 @@ import { BASE_CURRENCY_CODES, currencyFlag, formatMoney } from "@/lib/format";
 import { applyUiScale } from "@/lib/ui-scale";
 import { checkForUpdate, currentVersion, installPendingUpdate, type UpdateState } from "@/lib/updater";
 import { useErrorText } from "@/lib/use-error-text";
+import { ChangelogModal } from "@/components/changelog-modal";
+import { ExchangeRatesEditor } from "@/components/exchange-rates-editor";
+import { LATEST_CHANGELOG } from "@/lib/changelog";
 import { HotkeysCard, MenuLayoutCard, MobileNavCard } from "./settings-navigation";
 
 const THEME_OPTS: { value: Theme; icon: typeof Sun; label: string }[] = [
@@ -190,6 +195,20 @@ function PortfoliosCard() {
   );
 }
 
+/** Valute: the shared exchange-rate editor, wrapped as a settings card. */
+function CurrenciesCard() {
+  const { t } = useTranslation();
+  return (
+    <Card>
+      <CardHeader
+        title={t("exchange_rates", { defaultValue: "Exchange rates" })}
+        subtitle={t("exchange_rates_desc", { defaultValue: "Needed to value multi-currency portfolios, the consolidated net worth and cross-currency transfers. A pair reads: 1 of the first currency = rate of the second. Missing pairs are derived from the ones you have (EUR→USD and EUR→GBP give you USD→GBP)." })}
+      />
+      <CardContent className="pt-3"><ExchangeRatesEditor /></CardContent>
+    </Card>
+  );
+}
+
 /** Privacy mode behavior: hover-reveal toggle + optional unlock code. */
 function PrivacyCard() {
   const { t } = useTranslation();
@@ -257,6 +276,8 @@ function UpdatesCard() {
   const tauri = isTauri();
 
   const [version, setVersion] = useState("");
+  // Release notes on demand — the same modal the app pops after an update.
+  const [notesOpen, setNotesOpen] = useState(false);
   const [state, setState] = useState<UpdateState | null>(null);
   const [busy, setBusy] = useState(false);
   const [pct, setPct] = useState<number | null>(null);
@@ -293,9 +314,17 @@ function UpdatesCard() {
       />
       <CardContent className="space-y-3 pt-3">
         {version && (
-          <p className="text-sm text-muted">
+          <p className="flex flex-wrap items-center gap-2 text-sm text-muted">
             {t("current_version", { defaultValue: "Current version" })}: <span className="font-medium text-foreground">v{version}</span>
+            {LATEST_CHANGELOG && (
+              <button onClick={() => setNotesOpen(true)} className="text-sm font-medium text-primary hover:underline">
+                {t("whats_new", { defaultValue: "What's new" })}
+              </button>
+            )}
           </p>
+        )}
+        {LATEST_CHANGELOG && (
+          <ChangelogModal entry={LATEST_CHANGELOG} open={notesOpen} onClose={() => setNotesOpen(false)} dateFormat={prefs?.date_format} />
         )}
 
         <label className="flex items-start gap-3 rounded-[var(--radius-control)] border border-border p-3">
@@ -885,6 +914,8 @@ function SecurityCard() {
   const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string }>();
+  const [bio, setBio] = useState<BiometricStatus | null>(null);
+  useEffect(() => { void biometricStatus().then(setBio); }, []);
 
   const refresh = () => { isPasswordSet().then(setHasPassword).catch(() => setHasPassword(false)); };
   useEffect(refresh, []);
@@ -1040,6 +1071,28 @@ function SecurityCard() {
         )}
 
         {msg && <p className={cn("text-sm", msg.ok ? "text-positive" : "text-negative")}>{msg.text}</p>}
+
+        {/* Touch ID: reported honestly rather than faked. A fingerprint can only
+            replace the password if the OS holds it in the Secure Enclave, which
+            an unsigned build cannot ask for. */}
+        {isTauri() && bio && (
+          <div className="flex items-start gap-3 rounded-[var(--radius-control)] border border-border p-3">
+            <Fingerprint className={cn("mt-0.5 h-4 w-4 shrink-0", bio.available ? "text-primary" : "text-muted-2")} />
+            <span>
+              <span className="block text-sm font-medium text-foreground">{t("touch_id", { defaultValue: "Unlock with Touch ID" })}</span>
+              <span className="block text-xs text-muted">
+                {bio.available
+                  ? t("touch_id_ready", { defaultValue: "Your Mac can store the app password in the Secure Enclave." })
+                  : bio.reason === "needs_signing"
+                    ? t("touch_id_needs_signing", { defaultValue: "Not available in this build. macOS only releases a fingerprint-protected secret to an app signed with an Apple Developer ID, and Yfine ships unsigned. Storing your password anywhere less protected would weaken the encryption it exists to provide, so it isn't offered." })
+                    : bio.reason === "no_biometry"
+                      ? t("touch_id_no_biometry", { defaultValue: "This Mac has no fingerprint enrolled." })
+                      : t("touch_id_unavailable", { defaultValue: "Not available on this system." })}
+                {bio.code != null && !bio.available && <span className="text-muted-2"> ({bio.code})</span>}
+              </span>
+            </span>
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -1055,11 +1108,13 @@ const SETTINGS_SECTIONS: { id: string; labelKey: string; label: string; icon: ty
   { id: "theme", labelKey: "theme", label: "Theme", icon: Palette, iconClass: "text-primary", render: () => <AppearanceCard /> },
   { id: "language", labelKey: "language", label: "Language", icon: Languages, iconClass: "text-primary", render: () => <LanguageCard /> },
   { id: "portfolios", labelKey: "portfolios", label: "Portfolios", icon: Briefcase, iconClass: "text-primary", render: () => <PortfoliosCard /> },
-  { id: "privacy", labelKey: "privacy_mode", label: "Privacy mode", icon: Lock, iconClass: "text-primary", render: () => <PrivacyCard /> },
-  { id: "security", labelKey: "security", label: "Security", icon: Shield, iconClass: "text-negative", render: () => <SecurityCard /> },
-  { id: "updates", labelKey: "updates", label: "Updates", icon: DownloadCloud, iconClass: "text-primary", render: () => <UpdatesCard /> },
-  { id: "data", labelKey: "data", label: "Data", icon: Database, iconClass: "text-positive", render: () => (<div className="space-y-4"><ExportCard /><RestoreCard /><DangerZoneCard /></div>) },
-  { id: "imports", labelKey: "import_from_bank", label: "Import from bank or app", icon: UploadCloud, iconClass: "text-primary", render: () => <ImportCard /> },
+  { id: "currencies", labelKey: "currencies", label: "Currencies", icon: Coins, iconClass: "text-primary", render: () => <CurrenciesCard /> },
+  // Privacy mode, app password and updates are all "how the app protects and
+  // maintains itself" — three one-card sections made the list long and each page
+  // mostly empty, so they share one.
+  { id: "security", labelKey: "privacy_and_security", label: "Privacy & security", icon: Shield, iconClass: "text-negative", render: () => (<div className="space-y-4"><PrivacyCard /><SecurityCard /><UpdatesCard /></div>) },
+  // Backup/restore and bank imports are both "getting data in and out".
+  { id: "data", labelKey: "data_and_import", label: "Data & import", icon: Database, iconClass: "text-positive", render: () => (<div className="space-y-4"><ExportCard /><ImportCard /><RestoreCard /><DangerZoneCard /></div>) },
   { id: "menu", labelKey: "menu_layout", label: "Sidebar Menu", icon: ListOrdered, iconClass: "text-primary", render: () => <MenuLayoutCard /> },
   { id: "hotkeys", labelKey: "hotkeys", label: "Keyboard Shortcuts", icon: Keyboard, iconClass: "text-muted", render: () => <HotkeysCard /> },
 ];

@@ -82,8 +82,8 @@ describe("addAttachment (DB + validation)", () => {
     await addAttachment(db, mid, file("r.png", "image/png", 50), PNG);
     expect((await listAttachments(db, mid)).length).toBe(1);
 
-    // purgeAttachmentFiles runs first; with no fs it swallows the error and the
-    // row delete still completes — no orphaned rows remain.
+    // stageAttachmentUnlinks runs first (SELECT-only — real unlinks happen
+    // post-commit in queries.ts); the row delete completes — no orphaned rows.
     await deleteMovement(db, mid);
     const left = await db.select<{ c: number }>(`SELECT COUNT(*) c FROM movement_attachments WHERE movement_id = ?`, [mid]);
     expect(left[0].c).toBe(0);

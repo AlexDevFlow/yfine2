@@ -6,7 +6,7 @@
  * BOTH legs. Cross-currency keeps an independent `toAmount` on the IN leg.
  */
 import type { SqlExecutor } from "../types";
-import { purgeAttachmentFiles } from "./attachments";
+import { stageAttachmentUnlinks } from "./attachments";
 
 const now = () => new Date().toISOString();
 
@@ -107,9 +107,9 @@ export async function deleteMovementCascade(
   if (rows[0].transfer_pair_id != null) ids.add(rows[0].transfer_pair_id);
   const list = [...ids];
   const ph = list.map(() => "?").join(",");
-  // Unlink the on-disk attachment files BEFORE dropping the rows so nothing is
-  // orphaned (best-effort; never blocks the delete).
-  await purgeAttachmentFiles(db, list);
+  // Stage the on-disk attachment files for post-commit unlink BEFORE dropping
+  // the rows (the actual fs removal happens after the enclosing tx commits).
+  await stageAttachmentUnlinks(db, list);
   await db.execute(`DELETE FROM goal_allocations WHERE movement_id IN (${ph})`, list);
   await db.execute(`DELETE FROM movement_tag WHERE movement_id IN (${ph})`, list);
   await db.execute(`DELETE FROM movement_attachments WHERE movement_id IN (${ph})`, list);

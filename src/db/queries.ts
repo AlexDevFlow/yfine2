@@ -3,6 +3,7 @@ import { getDb } from "./connection";
 import * as sources from "./repo/sources";
 import * as movements from "./repo/movements";
 import * as dashboard from "./repo/dashboard";
+import * as breakdown from "./repo/breakdown";
 import * as recurring from "./repo/recurring";
 import * as notifications from "./repo/notifications";
 import * as budgets from "./repo/budgets";
@@ -14,7 +15,8 @@ import { importFile, resetAllData } from "./backup";
 import { commitCsv, undoImport } from "./importers/csv";
 import * as settingsRepo from "./repo/settings";
 import * as templatesRepo from "./repo/movement-templates";
-import { convert } from "./repo/exchange-rates";
+import * as rates from "./repo/exchange-rates";
+import * as fx from "./repo/fx";
 import { createSplit, type NewSplit } from "./repo/splits";
 import { forecastCashflow } from "./repo/forecast";
 import { consolidatedNetWorth } from "./repo/consolidate";
@@ -28,6 +30,32 @@ import { round2 } from "@/domain/money";
 import { addMonthsISO, monthEnd, monthStart, todayISO } from "@/lib/date";
 import type { SourceRow, TagRow } from "./schema-types";
 import { withTx } from "./tx";
+import type { SqlExecutor } from "./types";
+
+/**
+ * withTx + deferred attachment-file cleanup. Delete cascades only STAGE their
+ * on-disk unlinks (see stageAttachmentUnlinks): flush them once the tx has
+ * COMMITTED, discard them on rollback — so a failed transaction can never
+ * leave live DB rows pointing at already-deleted files. Every mutation in this
+ * layer funnels through here; the flush is best-effort and never throws.
+ */
+async function withTxAndCleanup<T>(db: SqlExecutor, fn: (tx: SqlExecutor) => Promise<T>): Promise<T> {
+  let staged: string[] = [];
+  const result = await withTx(db, async (tx) => {
+    attachments.beginUnlinkStaging();
+    try {
+      return await fn(tx);
+    } finally {
+      // Capture inside the tx body — the withTx mutex is still held, so an
+      // overlapping queued transaction can never clobber this tx's names.
+      staged = attachments.endUnlinkStaging();
+    }
+  });
+  // Reached only on COMMIT; on rollback the throw above skips the unlink and
+  // the captured names are dropped (rows still exist, files must stay).
+  await attachments.unlinkStoredFiles(staged);
+  return result;
+}
 
 // Every money-derived view. Mutations that can ripple anywhere money lives
 // (goal allocations, whim purchases, budget rules, restores, tag merges)
@@ -38,17 +66,26 @@ function invalidateMoney(qc: ReturnType<typeof useQueryClient>) {
 }
 
 // Plain movement ops (create/edit/delete/transfer/split/bulk) write only to
-// `movements`/`movement_tag`; they never touch recurring/whim/goal/portfolio
-// definitions or generate notifications (those come from the boot scheduler and
-// source ops). So they only need the views *derived* from movements — sparing a
-// refetch of the always-mounted notification badge on every single edit.
-const MOVEMENT_KEYS = ["movements", "sources", "dashboard", "budgets", "forecast", "consolidated", "savings", "history", "movementCounts"];
+// `movements`/`movement_tag` — plus the goal_allocations rows a delete cascades
+// away; they never touch recurring/whim/portfolio definitions or generate
+// notifications (those come from the boot scheduler and source ops). So they
+// only need the views *derived* from movements — goal progress, allocation
+// lists and tag usage counts included — sparing a refetch of the always-mounted
+// notification badge on every single edit.
+const MOVEMENT_KEYS = ["movements", "sources", "dashboard", "budgets", "goals", "goalAllocations", "tags", "forecast", "consolidated", "savings", "history", "movementCounts"];
 function invalidateMovementMoney(qc: ReturnType<typeof useQueryClient>) {
   for (const k of MOVEMENT_KEYS) void qc.invalidateQueries({ queryKey: [k] });
 }
 
 export interface SourceWithBalance extends SourceRow {
+  /** Cash balance: starting balance + movements. Excludes portfolios. */
   balance: number;
+  /** Market value of the portfolios linked to this source, in its currency. */
+  portfolio_value: number;
+  /** Cash + portfolios — what the account is actually worth, and what net worth counts. */
+  total_value: number;
+  /** A linked portfolio couldn't be converted into this source's currency. */
+  portfolio_unconverted: boolean;
 }
 
 export function useSources() {
@@ -56,14 +93,22 @@ export function useSources() {
     queryKey: ["sources"],
     queryFn: async (): Promise<SourceWithBalance[]> => {
       const db = await getDb();
-      const [list, balances] = await Promise.all([
+      const [list, balances, pfValues] = await Promise.all([
         sources.listSources(db, { includeHidden: true }),
         sources.getBalancesBatch(db),
+        portfolios.valueBySource(db),
       ]);
-      return list.map((s) => ({
-        ...s,
-        balance: balances.get(s.id) ?? round2(s.starting_balance),
-      }));
+      return list.map((s) => {
+        const balance = balances.get(s.id) ?? round2(s.starting_balance);
+        const pf = pfValues.get(s.id);
+        return {
+          ...s,
+          balance,
+          portfolio_value: pf?.value ?? 0,
+          total_value: round2(balance + (pf?.value ?? 0)),
+          portfolio_unconverted: pf?.unconverted ?? false,
+        };
+      });
     },
   });
 }
@@ -89,10 +134,9 @@ export function useUpdateSource() {
       const db = await getDb();
       return sources.updateSource(db, v.id, v.patch);
     },
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ["sources"] });
-      void qc.invalidateQueries({ queryKey: ["dashboard"] });
-    },
+    // Name/currency/fund edits ripple into every money-derived view (movement
+    // rows, budgets, forecasts…), not just the sources list — refresh the lot.
+    onSuccess: () => invalidateMoney(qc),
   });
 }
 
@@ -104,12 +148,11 @@ export function useDeleteSource() {
       // Multi-table cascade (movements, tags, attachments, holdings, portfolios,
       // recurring, the source row) — must be atomic or a mid-cascade failure
       // corrupts the DB. Mirrors useMergeSources below.
-      return withTx(db, (tx) => sources.deleteSource(tx, v.id, v.action));
+      return withTxAndCleanup(db, (tx) => sources.deleteSource(tx, v.id, v.action));
     },
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ["sources"] });
-      void qc.invalidateQueries({ queryKey: ["dashboard"] });
-    },
+    // The cascade reaches movements/allocations on OTHER sources too — refresh
+    // every money-derived view, mirroring useMergeSources.
+    onSuccess: () => invalidateMoney(qc),
   });
 }
 
@@ -133,7 +176,7 @@ export function useMergeSources() {
   return useMutation({
     mutationFn: async (v: { fromId: number; toId: number }) => {
       const db = await getDb();
-      return withTx(db, (tx) => sources.mergeSources(tx, v.fromId, v.toId));
+      return withTxAndCleanup(db, (tx) => sources.mergeSources(tx, v.fromId, v.toId));
     },
     onSuccess: () => invalidateMoney(qc),
   });
@@ -169,7 +212,7 @@ function useTagMutation<TArgs, TResult>(fn: (db: import("./types").SqlExecutor, 
   return useMutation({
     mutationFn: async (a: TArgs) => {
       const db = await getDb();
-      return withTx(db, (tx) => fn(tx, a));
+      return withTxAndCleanup(db, (tx) => fn(tx, a));
     },
     // Tag edits ripple into every tagged movement, budget rules, and the dashboard.
     onSuccess: () => {
@@ -368,6 +411,30 @@ export function useMovementSums(filters: movements.MovementFilters) {
   });
 }
 
+/**
+ * Spending/income breakdown for whatever `filters` select — categories, accounts,
+ * biggest movements, month curve. Keyed under "movements" so every movement
+ * mutation refreshes it along with the list it was opened from.
+ *
+ * When the filters carry a full date range the same-length preceding window is
+ * summed too, so the panel can show a "vs previous period" delta.
+ */
+export function useBreakdown(filters: movements.MovementFilters | null, currency?: string) {
+  return useQuery({
+    queryKey: ["movements", "breakdown", filters, currency ?? null],
+    enabled: filters != null,
+    queryFn: async () => {
+      const db = await getDb();
+      const f = filters!;
+      const data = await breakdown.spendingBreakdown(db, f, { currency });
+      if (!f.dateFrom || !f.dateTo) return { ...data, previousTotal: null, previousFrom: null, previousTo: null };
+      const prev = breakdown.previousRange(f.dateFrom, f.dateTo);
+      const totals = await breakdown.totalByCurrency(db, { ...f, dateFrom: prev.from, dateTo: prev.to });
+      return { ...data, previousTotal: totals[data.currency] ?? 0, previousFrom: prev.from, previousTo: prev.to };
+    },
+  });
+}
+
 // ---- quick-add templates + saved views (settings JSON blobs) ----
 export function useMovementTemplates() {
   return useQuery({
@@ -409,10 +476,37 @@ export function useConvert(amount: number, from: string | undefined, to: string 
     queryKey: ["convert", amount, from, to],
     enabled: amount > 0 && !!from && !!to && from !== to,
     queryFn: async () =>
-      from && to ? convert(await getDb(), amount, from, to) : null,
+      from && to ? rates.convert(await getDb(), amount, from, to) : null,
     staleTime: 60_000,
   });
 }
+
+// ---- exchange rates (Settings -> Currencies) ----
+// A rate change re-values portfolios, the consolidated net worth and every
+// transfer auto-fill, so writes invalidate the money views wholesale.
+export function useExchangeRates() {
+  return useQuery({ queryKey: ["rates"], queryFn: async () => rates.listRates(await getDb()) });
+}
+
+function useRateMutation<TArgs, TResult>(fn: (db: SqlExecutor, a: TArgs) => Promise<TResult>) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (a: TArgs) => fn(await getDb(), a),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["rates"] });
+      void qc.invalidateQueries({ queryKey: ["convert"] });
+      invalidateMoney(qc);
+    },
+  });
+}
+
+export const useUpsertRate = () =>
+  useRateMutation((db, v: { from: string; to: string; rate: number }) => rates.upsertRate(db, v.from, v.to, v.rate));
+export const useDeleteRate = () => useRateMutation((db, id: number) => rates.deleteRate(db, id));
+
+/** Manual "Update rates" — network call, outside any transaction. Never throws
+ *  for an outage: the result reports it via `offline` instead. */
+export const useRefreshRates = () => useRateMutation((db, _a: void) => fx.refreshRates(db));
 
 /** Money mutations run atomically (withTx) and refresh every derived view. */
 function useMoneyMutation<TArgs, TResult>(fn: (db: import("./types").SqlExecutor, args: TArgs) => Promise<TResult>) {
@@ -420,7 +514,7 @@ function useMoneyMutation<TArgs, TResult>(fn: (db: import("./types").SqlExecutor
   return useMutation({
     mutationFn: async (args: TArgs) => {
       const db = await getDb();
-      return withTx(db, (tx) => fn(tx, args));
+      return withTxAndCleanup(db, (tx) => fn(tx, args));
     },
     onSuccess: () => invalidateMovementMoney(qc),
   });
@@ -435,8 +529,11 @@ export function useDashboard(comparisonMonths = 6) {
       const today = todayISO();
       const ms = monthStart(today);
       const me = monthEnd(today);
+      const excluded = settingsRepo.parseNetWorthExcluded(
+        (await settingsRepo.getSettings(db)).net_worth_excluded_json,
+      );
       const [nw, flow, savings, recent, upcoming, counts] = await Promise.all([
-        dashboard.netWorth(db),
+        dashboard.netWorth(db, excluded),
         dashboard.monthlyFlow(db, ms, me),
         dashboard.monthlySavings(db, ms, me),
         movements.listMovements(db, { excludeTransferIn: true }, { limit: 6 }),
@@ -455,7 +552,11 @@ export function useDashboard(comparisonMonths = 6) {
 export function useNetWorthHistoryAll() {
   return useQuery({
     queryKey: ["history", "networthAll"],
-    queryFn: async () => history.netWorthHistoryAll(await getDb()),
+    queryFn: async () => {
+      const db = await getDb();
+      const excluded = settingsRepo.parseNetWorthExcluded((await settingsRepo.getSettings(db)).net_worth_excluded_json);
+      return history.netWorthHistoryAll(db, excluded);
+    },
   });
 }
 
@@ -503,7 +604,7 @@ function useRecurringMutation<TArgs, TResult>(fn: (db: import("./types").SqlExec
   return useMutation({
     mutationFn: async (a: TArgs) => {
       const db = await getDb();
-      return withTx(db, (tx) => fn(tx, a));
+      return withTxAndCleanup(db, (tx) => fn(tx, a));
     },
     onSuccess: () => invalidateMoney(qc),
   });
@@ -602,7 +703,7 @@ function useBroadMutation<TArgs, TResult>(fn: (db: import("./types").SqlExecutor
   return useMutation({
     mutationFn: async (a: TArgs) => {
       const db = await getDb();
-      return withTx(db, (tx) => fn(tx, a));
+      return withTxAndCleanup(db, (tx) => fn(tx, a));
     },
     onSuccess: () => invalidateMoney(qc),
   });
@@ -682,7 +783,7 @@ function usePortfolioMutation<TArgs, TResult>(fn: (db: import("./types").SqlExec
   return useMutation({
     mutationFn: async (a: TArgs) => {
       const db = await getDb();
-      return withTx(db, (tx) => fn(tx, a));
+      return withTxAndCleanup(db, (tx) => fn(tx, a));
     },
     onSuccess: () => {
       for (const k of ["portfolios", "dashboard", "consolidated"]) void qc.invalidateQueries({ queryKey: [k] });
@@ -691,7 +792,33 @@ function usePortfolioMutation<TArgs, TResult>(fn: (db: import("./types").SqlExec
 }
 export const useCreatePortfolio = () => usePortfolioMutation((db, data: portfolios.NewPortfolio) => portfolios.createPortfolio(db, data));
 export const useDeletePortfolio = () => usePortfolioMutation((db, id: number) => portfolios.deletePortfolio(db, id));
-export const useCreateHolding = () => usePortfolioMutation((db, data: portfolios.NewHolding) => portfolios.createHolding(db, data));
+/**
+ * Add a holding, then immediately fetch its price. Without this the new row sits
+ * at cost basis until the next 15-minute tick — which reads as the app showing a
+ * wrong value (an ICP bought at 13.20 kept being valued at 13.20). The fetch runs
+ * AFTER the write commits (network work must never sit inside a transaction) and
+ * fails soft: an outage just leaves the price to the next refresh.
+ */
+export function useCreateHolding() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: portfolios.NewHolding) => {
+      const db = await getDb();
+      const id = await withTxAndCleanup(db, (tx) => portfolios.createHolding(tx, data));
+      if (!data.manual_price && (await portfolios.arePricesEnabled(db))) {
+        try {
+          await prices.refreshHolding(db, id);
+        } catch {
+          /* offline / provider down — the periodic refresh will catch it */
+        }
+      }
+      return id;
+    },
+    onSuccess: () => {
+      for (const k of ["portfolios", "dashboard", "consolidated", "sources"]) void qc.invalidateQueries({ queryKey: [k] });
+    },
+  });
+}
 export const useUpdateHolding = () => usePortfolioMutation((db, v: { id: number; patch: portfolios.HoldingPatch }) => portfolios.updateHolding(db, v.id, v.patch));
 export const useDeleteHolding = () => usePortfolioMutation((db, id: number) => portfolios.deleteHolding(db, id));
 
@@ -772,6 +899,10 @@ export function useUpdatePreferences() {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["settings"] });
       void qc.invalidateQueries({ queryKey: ["dashboard"] });
+      // net_worth_excluded_json / base_currency both change the consolidated total
+      // and the net-worth history series.
+      void qc.invalidateQueries({ queryKey: ["consolidated"] });
+      void qc.invalidateQueries({ queryKey: ["history"] });
     },
   });
 }
@@ -826,6 +957,10 @@ export function useConsolidated(base: string | null) {
   return useQuery({
     queryKey: ["consolidated", base],
     enabled: !!base,
-    queryFn: async () => consolidatedNetWorth(await getDb(), base as string),
+    queryFn: async () => {
+      const db = await getDb();
+      const excluded = settingsRepo.parseNetWorthExcluded((await settingsRepo.getSettings(db)).net_worth_excluded_json);
+      return consolidatedNetWorth(db, base as string, excluded);
+    },
   });
 }

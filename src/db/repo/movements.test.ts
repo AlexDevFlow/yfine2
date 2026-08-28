@@ -1,7 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { makeMemDb } from "@/test/sqlite";
 import type { SqlExecutor } from "../types";
-import { createSource, getBalance } from "./sources";
+import { createSource, getBalance, listSources } from "./sources";
+import * as savings from "./savings";
+import * as goals from "./goals";
+import { createTransferPair } from "./transfers";
 import * as mv from "./movements";
 import { groupMovementsHierarchically } from "@/domain/grouping";
 
@@ -303,5 +306,81 @@ describe("movements repo — listing & filters", () => {
     // the very oldest movement is reachable on the last page — past the 200-row
     // legacy cap would NOT matter here, but offset paging surfaces it.
     expect(page3[page3.length - 1].note).toBe("m1");
+  });
+});
+
+describe("movements repo — transfer pair guards (review fixes)", () => {
+  it("createTransfer refuses savings funds on either side", async () => {
+    const { db } = await makeMemDb();
+    const a = await createSource(db, { name: "A", currency: "EUR", starting_balance: 100 });
+    const b = await createSource(db, { name: "B", currency: "EUR", starting_balance: 0 });
+    await savings.createSaving(db, { fromSourceId: a.id, amount: 10, date: "2026-05-01" });
+    const fund = (await listSources(db)).find((s) => s.is_savings_fund === 1)!;
+    await expect(
+      mv.createTransfer(db, { fromSourceId: a.id, toSourceId: fund.id, amount: 5, date: "2026-05-02" }),
+    ).rejects.toMatchObject({ code: "fund_transfer_not_allowed" });
+    await expect(
+      mv.createTransfer(db, { fromSourceId: fund.id, toSourceId: b.id, amount: 5, date: "2026-05-02" }),
+    ).rejects.toMatchObject({ code: "fund_transfer_not_allowed" });
+  });
+
+  it("updateTransfer refuses savings pairs (desyncs totalSaved)", async () => {
+    const { db } = await makeMemDb();
+    const a = await createSource(db, { name: "A", currency: "EUR", starting_balance: 100 });
+    const inId = await savings.createSaving(db, { fromSourceId: a.id, amount: 10, date: "2026-05-01" });
+    const inLeg = (await mv.getMovement(db, inId))!;
+    // the movements page lists the OUT leg — editing it must be rejected
+    await expect(
+      mv.updateTransfer(db, inLeg.transfer_pair_id!, { amount: 50 }),
+    ).rejects.toMatchObject({ code: "is_savings_pair" });
+  });
+
+  it("updateTransfer refuses goal-allocation pairs (desyncs goal progress)", async () => {
+    const { db } = await makeMemDb();
+    const acct = await createSource(db, { name: "Checking", currency: "EUR", starting_balance: 1000 });
+    const goalId = await goals.createGoal(db, { name: "Trip", target_amount: 1000, currency: "EUR" });
+    await goals.allocate(db, goalId, { fromSourceId: acct.id, amount: 200, date: "2026-05-01" });
+    const allocs = await db.select<{ movement_id: number }>(
+      `SELECT movement_id FROM goal_allocations WHERE goal_id = ?`, [goalId],
+    );
+    const inLeg = (await mv.getMovement(db, allocs[0].movement_id))!;
+    await expect(
+      mv.updateTransfer(db, inLeg.transfer_pair_id!, { date: "2026-06-01" }),
+    ).rejects.toMatchObject({ code: "is_goal_allocation" });
+  });
+
+  it("cross-currency edit: explicit null toAmount mirrors 1:1 (matches create)", async () => {
+    const { db } = await makeMemDb();
+    const eur = await createSource(db, { name: "EUR", currency: "EUR", starting_balance: 100 });
+    const usd = await createSource(db, { name: "USD", currency: "USD", starting_balance: 0 });
+    const pair = await mv.createTransfer(db, {
+      fromSourceId: eur.id, toSourceId: usd.id, amount: 100, toAmount: 110, date: "2026-05-01",
+    });
+    // user clears the received field and changes the amount → both legs follow (1:1)
+    await mv.updateTransfer(db, pair.outId, { amount: 200, toAmount: null });
+    expect((await mv.getMovement(db, pair.outId))!.amount).toBe(200);
+    expect((await mv.getMovement(db, pair.inId))!.amount).toBe(200);
+  });
+
+  it("same-currency pair rejects a mismatched toAmount (would mint money)", async () => {
+    const { db } = await makeMemDb();
+    const a = await createSource(db, { name: "A", currency: "EUR", starting_balance: 100 });
+    const b = await createSource(db, { name: "B", currency: "EUR", starting_balance: 0 });
+    const pair = await mv.createTransfer(db, { fromSourceId: a.id, toSourceId: b.id, amount: 100, date: "2026-05-01" });
+    await expect(
+      mv.updateTransfer(db, pair.outId, { amount: 100, toAmount: 150 }),
+    ).rejects.toMatchObject({ code: "invalid_amount" });
+  });
+
+  it("date-only edit works on a pair with an external OUT leg (savings migration shape)", async () => {
+    const { db } = await makeMemDb();
+    const a = await createSource(db, { name: "A", currency: "EUR", starting_balance: 0 });
+    // external OUT (source_id NULL) + real IN — what the migration wizard produces
+    const pair = await createTransferPair(db, {
+      fromSourceId: null, toSourceId: a.id, amount: 25, date: "2026-05-01",
+    });
+    await mv.updateTransfer(db, pair.outId, { date: "2026-05-15" });
+    expect((await mv.getMovement(db, pair.outId))!.date).toBe("2026-05-15");
+    expect((await mv.getMovement(db, pair.inId))!.date).toBe("2026-05-15");
   });
 });

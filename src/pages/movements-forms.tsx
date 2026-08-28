@@ -94,11 +94,18 @@ export function MovementForm({
           : "";
   const [sourceId, setSourceId] = useState<string>(defaultSource);
   const [amount, setAmount] = useState(
-    initial ? String(initial.amount) : prefill?.amount != null ? String(prefill.amount) : "",
+    // A 0/absent prefill amount means "start empty": rendering "0" would enable
+    // Save only to guarantee an invalid_amount error on submit.
+    initial ? String(initial.amount) : prefill?.amount ? String(prefill.amount) : "",
   );
   const [date, setDate] = useState(initial?.date ?? prefill?.date ?? todayISO());
   const [note, setNote] = useState(initial?.note ?? prefill?.note ?? "");
   const [tagIds, setTagIds] = useState<number[]>(initial?.tags.map((x) => x.id) ?? prefill?.tagIds ?? []);
+
+  // Gate Save on a valid positive result, not just non-emptiness, so malformed
+  // or non-positive expressions never reach the repository.
+  const amountNum = parseMoneyInput(amount);
+  const amountInvalid = amount.trim() !== "" && !(amountNum > 0);
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -135,7 +142,11 @@ export function MovementForm({
       </div>
 
       <div className="grid grid-cols-2 gap-3">
-        <Field label={t("amount", { defaultValue: "Amount" })} htmlFor="mv-amt">
+        <Field
+          label={t("amount", { defaultValue: "Amount" })}
+          htmlFor="mv-amt"
+          hint={amountInvalid ? t("amount_invalid", { defaultValue: "Enter a valid amount greater than zero (numbers only)." }) : undefined}
+        >
           <MoneyInput id="mv-amt" value={amount} onValueChange={setAmount} required autoFocus className="num" />
         </Field>
         <Field label={t("date", { defaultValue: "Date" })} htmlFor="mv-date">
@@ -163,9 +174,9 @@ export function MovementForm({
       )}
 
       {error ? <p className="text-sm text-negative">{error}</p> : null}
-      <div className="flex justify-end gap-2 pt-1">
+      <div className="sticky bottom-0 z-10 -mx-5 -mb-4 flex justify-end gap-2 border-t border-border bg-surface px-5 py-3">
         <Button type="button" variant="ghost" onClick={onCancel}>{t("cancel", { defaultValue: "Cancel" })}</Button>
-        <Button type="submit" disabled={pending || !amount}>{t("save", { defaultValue: "Save" })}</Button>
+        <Button type="submit" disabled={pending || !amount || amountInvalid}>{t("save", { defaultValue: "Save" })}</Button>
       </div>
     </form>
   );
@@ -218,14 +229,52 @@ export function TransferForm({
   const [note, setNote] = useState(initial?.note ?? "");
   const [tagIds, setTagIds] = useState<number[]>(initial?.tags.map((x) => x.id) ?? []);
 
-  const fromCcy = useMemo(() => real.find((s) => s.id === Number(fromId))?.currency, [real, fromId]);
-  const toCcy = useMemo(() => real.find((s) => s.id === Number(toId))?.currency, [real, toId]);
+  // A native <select> whose controlled value is still "" can visually display
+  // its first option. That made the form LOOK like "Contanti → Fineco" while
+  // React submitted Number("") === 0, and the repository correctly answered
+  // "not found". Reconcile async/refetched source lists and always resolve IDs
+  // from the actual option objects before enabling/submitting the form.
+  useEffect(() => {
+    if (real.length === 0) return;
+    const validFrom = real.some((s) => String(s.id) === fromId);
+    const nextFrom = validFrom ? fromId : String(real[0].id);
+    const validTo = real.some((s) => String(s.id) === toId);
+    let nextTo = validTo ? toId : String(real.find((s) => String(s.id) !== nextFrom)?.id ?? "");
+    if (nextTo === nextFrom) {
+      nextTo = String(real.find((s) => String(s.id) !== nextFrom)?.id ?? "");
+    }
+    if (nextFrom !== fromId) setFromId(nextFrom);
+    if (nextTo !== toId) setToId(nextTo);
+  }, [real, fromId, toId]);
+
+  const fromSource = useMemo(() => real.find((s) => String(s.id) === fromId), [real, fromId]);
+  const toSource = useMemo(() => real.find((s) => String(s.id) === toId), [real, toId]);
+  const fromCcy = fromSource?.currency;
+  const toCcy = toSource?.currency;
   const crossCurrency = !!fromCcy && !!toCcy && fromCcy !== toCcy;
   const sameSource = fromId !== "" && fromId === toId;
+  const sourceSelectionInvalid = !fromSource || !toSource;
+
+  const changeFrom = (next: string) => {
+    setFromId(next);
+    // Keep the pair valid by construction. This also covers an account list
+    // changed underneath an open form without leaving Save mysteriously stuck.
+    if (next === toId) {
+      const alternative = real.find((s) => String(s.id) !== next);
+      setToId(String(alternative?.id ?? ""));
+    }
+  };
+  const changeTo = (next: string) => {
+    setToId(next);
+    if (next === fromId) {
+      const alternative = real.find((s) => String(s.id) !== next);
+      setFromId(String(alternative?.id ?? ""));
+    }
+  };
 
   // Cross-currency auto-fill: prefill the converted amount from the configured
   // rate while the user hasn't overridden it. `convertedValue` is null when no
-  // rate exists (→ "no rate" hint; the field stays optional, save isn't blocked).
+  // rate exists (→ "no rate" hint; the user must enter the received amount).
   // parseMoneyInput (not Number) so the auto-convert also fires for expression /
   // grouped-locale input ("10+5", "1.234,56") that the save path already accepts.
   const amountNum = parseMoneyInput(amount);
@@ -245,16 +294,28 @@ export function TransferForm({
   useEffect(() => {
     if (!crossCurrency || toEdited.current) return;
     if (convertedValue != null) setToAmount(String(convertedValue));
-  }, [crossCurrency, convertedValue]);
+    // Pair switched to one with NO configured rate: clear a surviving auto-fill —
+    // the old number would silently read as an amount in the new target currency.
+    else if (convertFetched) setToAmount("");
+  }, [crossCurrency, convertedValue, convertFetched]);
   const noRate = crossCurrency && amountNum > 0 && convertFetched && convertedValue == null;
+
+  // Same positive-result gate as MovementForm: malformed or non-positive input
+  // is corrected in the form instead of bouncing off the repository.
+  const amountInvalid = amount.trim() !== "" && !(amountNum > 0);
+  const toAmountMissing = crossCurrency && toAmount.trim() === "";
+  const toAmountInvalid = crossCurrency && !toAmountMissing && !(parseMoneyInput(toAmount) > 0);
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
+    // The button is disabled in this state; keep the submit boundary defensive
+    // against synthetic submission / a source disappearing during the modal.
+    if (!fromSource || !toSource) return;
     onSubmit({
-      fromSourceId: Number(fromId),
-      toSourceId: Number(toId),
+      fromSourceId: fromSource.id,
+      toSourceId: toSource.id,
       amount: parseMoneyInput(amount),
-      // Optional: blank converted ⇒ null (1:1 leg), matching the original.
+      // Same currency uses null so the repository mirrors the amount 1:1.
       toAmount: crossCurrency && toAmount.trim() !== "" ? parseMoneyInput(toAmount) : null,
       date,
       note,
@@ -266,14 +327,16 @@ export function TransferForm({
     <form onSubmit={submit} className="space-y-4">
       <div className="grid grid-cols-2 gap-3">
         <Field label={t("from", { defaultValue: "From" })} htmlFor="tr-from">
-          <Select id="tr-from" value={fromId} onChange={(e) => setFromId(e.target.value)} required>
+          <Select id="tr-from" value={fromId} onChange={(e) => changeFrom(e.target.value)} required>
+            <option value="" disabled>{t("select_source", { defaultValue: "Select source" })}</option>
             {real.map((s) => (
               <option key={s.id} value={s.id}>{s.name} · {s.currency}</option>
             ))}
           </Select>
         </Field>
         <Field label={t("to", { defaultValue: "To" })} htmlFor="tr-to">
-          <Select id="tr-to" value={toId} onChange={(e) => setToId(e.target.value)} required>
+          <Select id="tr-to" value={toId} onChange={(e) => changeTo(e.target.value)} required>
+            <option value="" disabled>{t("select_source", { defaultValue: "Select source" })}</option>
             {real.map((s) => (
               <option key={s.id} value={s.id}>{s.name} · {s.currency}</option>
             ))}
@@ -285,7 +348,11 @@ export function TransferForm({
       )}
 
       <div className="grid grid-cols-2 gap-3">
-        <Field label={crossCurrency ? `${t("amount", { defaultValue: "Amount" })} (${fromCcy})` : t("amount", { defaultValue: "Amount" })} htmlFor="tr-amt">
+        <Field
+          label={crossCurrency ? `${t("amount", { defaultValue: "Amount" })} (${fromCcy})` : t("amount", { defaultValue: "Amount" })}
+          htmlFor="tr-amt"
+          hint={amountInvalid ? t("amount_invalid", { defaultValue: "Enter a valid amount greater than zero (numbers only)." }) : undefined}
+        >
           <MoneyInput id="tr-amt" value={amount} onValueChange={setAmount} required className="num" />
         </Field>
         {crossCurrency && (
@@ -293,11 +360,13 @@ export function TransferForm({
             label={`${t("amount_received", { defaultValue: "Amount received" })} (${toCcy})`}
             htmlFor="tr-to-amt"
             hint={
-              noRate
-                ? t("transfer_no_rate", { defaultValue: "No exchange rate set — enter the amount manually" })
-                : !toEdited.current && toAmount
-                  ? t("converted_amount", { defaultValue: "Auto-converted (editable)" })
-                  : undefined
+              toAmountInvalid
+                ? t("amount_invalid", { defaultValue: "Enter a valid amount greater than zero (numbers only)." })
+                : noRate
+                  ? t("transfer_no_rate", { defaultValue: "No exchange rate set — enter the amount manually" })
+                  : !toEdited.current && toAmount
+                    ? t("converted_amount", { defaultValue: "Auto-converted (editable)" })
+                    : undefined
             }
           >
             <MoneyInput
@@ -307,6 +376,7 @@ export function TransferForm({
                 toEdited.current = true;
                 setToAmount(v);
               }}
+              required
               className="num"
             />
           </Field>
@@ -327,9 +397,9 @@ export function TransferForm({
       )}
 
       {error ? <p className="text-sm text-negative">{error}</p> : null}
-      <div className="flex justify-end gap-2 pt-1">
+      <div className="sticky bottom-0 z-10 -mx-5 -mb-4 flex justify-end gap-2 border-t border-border bg-surface px-5 py-3">
         <Button type="button" variant="ghost" onClick={onCancel}>{t("cancel", { defaultValue: "Cancel" })}</Button>
-        <Button type="submit" disabled={pending || !amount || sameSource || real.length < 2}>
+        <Button type="submit" disabled={pending || !amount || amountInvalid || toAmountMissing || toAmountInvalid || sameSource || sourceSelectionInvalid || real.length < 2}>
           {t("save", { defaultValue: "Save" })}
         </Button>
       </div>

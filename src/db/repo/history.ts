@@ -37,9 +37,18 @@ function cumulative(start: number, deltas: { date: string; delta: number }[]): H
 }
 
 /** Net-worth-over-time for one currency (all that currency's sources combined). */
-export async function netWorthHistory(db: SqlExecutor, currency: string): Promise<HistoryPoint[]> {
+export async function netWorthHistory(
+  db: SqlExecutor,
+  currency: string,
+  excludedSourceIds: number[] = [],
+): Promise<HistoryPoint[]> {
+  // Accounts the user left out of net worth must drop out of its history too,
+  // or the chart contradicts the number printed above it. Ids come from settings
+  // (never user text), so inlining them keeps one bound-parameter shape per call.
+  const skip = excludedSourceIds.filter((n) => Number.isInteger(n));
+  const notExcluded = skip.length > 0 ? ` AND s.id NOT IN (${skip.join(",")})` : "";
   const startRow = await db.select<{ s: number }>(
-    `SELECT COALESCE(SUM(starting_balance),0) s FROM sources WHERE currency = ?`,
+    `SELECT COALESCE(SUM(starting_balance),0) s FROM sources s WHERE s.currency = ?${notExcluded}`,
     [currency],
   );
   const start = startRow[0]?.s ?? 0;
@@ -47,7 +56,7 @@ export async function netWorthHistory(db: SqlExecutor, currency: string): Promis
     `SELECT m.date AS date,
         SUM(CASE WHEN m.direction='in' THEN m.amount ELSE -m.amount END) AS delta
      FROM movements m JOIN sources s ON m.source_id = s.id
-     WHERE s.currency = ?
+     WHERE s.currency = ?${notExcluded}
      GROUP BY m.date ORDER BY m.date ASC`,
     [currency],
   );
@@ -70,13 +79,17 @@ export interface CurrencySeries {
  * movement dates so the lines stay aligned on a shared x-axis. Mirrors the
  * original dashboard.html per-currency Chart.js datasets.
  */
-export async function netWorthHistoryAll(db: SqlExecutor): Promise<CurrencySeries[]> {
+export async function netWorthHistoryAll(
+  db: SqlExecutor,
+  excludedSourceIds: number[] = [],
+): Promise<CurrencySeries[]> {
+  const skip = excludedSourceIds.filter((n) => Number.isInteger(n));
   const currencyRows = await db.select<{ currency: string }>(
-    `SELECT DISTINCT currency FROM sources ORDER BY currency`,
+    `SELECT DISTINCT currency FROM sources s${skip.length > 0 ? ` WHERE s.id NOT IN (${skip.join(",")})` : ""} ORDER BY currency`,
   );
   const raw: CurrencySeries[] = [];
   for (const { currency } of currencyRows) {
-    raw.push({ currency, points: await netWorthHistory(db, currency) });
+    raw.push({ currency, points: await netWorthHistory(db, currency, excludedSourceIds) });
   }
   if (raw.length === 0) return [];
 

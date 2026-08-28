@@ -36,8 +36,15 @@ export function resyncYieldSchedule(
 }
 
 export interface YieldAccrualPort {
-  /** Current cash balance of the source (excludes portfolio value). */
-  getBalance(sourceId: number): Promise<number>;
+  /**
+   * Cash balance of the source as of `asOfDateISO` (excludes portfolio value).
+   * Deviation from the legacy port (which used the CURRENT balance for every
+   * catch-up period): a missed period must accrue on the balance the source
+   * held at that period's date, or money deposited later earns retroactive
+   * interest. Compounding still works — posted interest is dated at the
+   * accrual date, so later periods see it.
+   */
+  getBalance(sourceId: number, asOfDateISO: string): Promise<number>;
   /** Post an `in` interest movement dated `dateISO`. */
   postInterest(
     sourceId: number,
@@ -75,9 +82,9 @@ export async function accrueSource(
   while (next && next <= today && guard < MAX_ITERATIONS) {
     guard += 1;
     if (last === next) break; // idempotency: already credited this date
-    const balance = await port.getBalance(source.id);
-    const interest = round2((balance * source.yield_rate) / 100);
     const accrualDate = next;
+    const balance = await port.getBalance(source.id, accrualDate);
+    const interest = round2((balance * source.yield_rate) / 100);
     if (interest > 0) {
       await port.postInterest(
         source.id,

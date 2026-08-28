@@ -4,6 +4,7 @@
 <h6>What you see</h6>
 <ul>
   <li><strong>Net worth</strong> card at the top, grouped by currency if you use more than one. The eye icon (<i class="bi bi-eye"></i>) hides the numbers for privacy.</li>
+  <li>Next to the eye, the <strong>sliders icon</strong> picks which accounts count toward net worth. Leaving one out also leaves out the portfolios linked to it, and the chart below follows the same selection. All accounts count until you say otherwise.</li>
   <li><strong>Income</strong> and <strong>Expenses</strong> cards for the current month. They are clickable and open a detailed modal.</li>
   <li><strong>Savings</strong> card for what you set aside this month.</li>
   <li><strong>Recent movements</strong>: the last entries you recorded. Click one to edit it.</li>
@@ -45,9 +46,13 @@
 </div>
 
 <h6>The month modal</h6>
-<p>Clicking the Income or Expenses card opens a modal listing every movement of that type for the current month. Inside the modal:</p>
+<p>Clicking the Income or Expenses card opens a modal on the <strong>Breakdown</strong> tab, the charts that answer "where did it actually go?". The <strong>Movements</strong> tab next to it is the row-by-row list.</p>
 <ul>
-  <li>A row of <strong>source chips</strong> lets you include or exclude specific sources. Green means included, red means hidden.</li>
+  <li><strong>Breakdown</strong> shows the total against the same period before it, a donut of your categories (tags), the largest single movements, notes that repeat (subscriptions and habits), the split by account, and month-by-month and weekday curves. Switch between expenses and income, and change the period, at the top of the panel.</li>
+  <li>Click a category to open the movements behind it; click an account to open that account.</li>
+  <li>A movement carrying several tags splits its amount evenly between them, so the slices always add up to 100%. Hover a category to see what it costs counting every movement with that tag in full.</li>
+  <li>Amounts are never converted between currencies. When the period holds more than one, a row of currency chips lets you switch.</li>
+  <li>In <strong>Movements</strong>, a row of <strong>source chips</strong> lets you include or exclude specific sources. Green means included, red means hidden.</li>
   <li>Each movement has an <strong>exclude from stats</strong> toggle. Use it for one-off entries that should not affect your monthly totals (for example, a reimbursement you counted twice).</li>
 </ul>
 

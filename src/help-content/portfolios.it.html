@@ -33,7 +33,8 @@
 
 <h6>Cosa vedi</h6>
 <ul>
-  <li>Un interruttore <strong>Prezzi live</strong> in alto. Quando è attivo, i prezzi si aggiornano automaticamente ogni 30 minuti. Quando è spento, Yfine mostra solo il costo di acquisto.</li>
+  <li>I prezzi live si attivano in <strong>Impostazioni &rarr; Portafogli</strong>. Finché sono spenti, un banner ricorda che i totali sono il costo di acquisto, non il valore di mercato.</li>
+  <li>Un pulsante <strong>Tassi di cambio</strong>, per valorizzare le posizioni prezzate in una valuta diversa da quella base del portafoglio.</li>
   <li>Un pulsante <strong>Aggiorna</strong> per forzare subito un aggiornamento dei prezzi (disattivato quando Prezzi Live è spento).</li>
   <li>Portafogli raggruppati per <strong>fonte</strong> collegata, con un totale investimenti mostrato per ogni fonte.</li>
   <li>Ogni scheda portafoglio: nome, <strong>badge del tipo</strong> (crypto, azioni, misto), valore totale, costo investito, <strong>profitto o perdita</strong> con percentuale, numero di posizioni e una sparkline a 30 giorni.</li>
@@ -52,7 +53,7 @@
     <span class="yn-help-action-icon info"><i class="bi bi-toggle-on"></i></span>
     <div class="yn-help-action-body">
       <span class="yn-help-action-label">Interruttore Prezzi Live</span>
-      <span class="yn-help-action-desc">Attivalo per recuperare i prezzi da internet ogni 30 minuti. Spento significa gestione manuale.</span>
+      <span class="yn-help-action-desc">Attivalo per recuperare i prezzi da internet ogni 15 minuti. Spento significa gestione manuale.</span>
     </div>
   </div>
   <div class="yn-help-action">
@@ -99,6 +100,20 @@
 <h6>Valuta base</h6>
 <p>La valuta base è quella in cui il portafoglio riporta i totali. Le singole posizioni possono essere prezzate in qualsiasi valuta, e Yfine le converte nella valuta base. La valuta della fonte è la scelta naturale, ma puoi sceglierne un'altra.</p>
 
+<h6>Tassi di cambio</h6>
+<p>Per convertire serve un tasso, e Yfine non se lo inventa. Una posizione che non riesce a convertire viene <strong>lasciata fuori dal totale</strong> e la scheda lo segnala: una somma di valute diverse sarebbe un numero senza significato.</p>
+<p>Il pulsante <span class="yn-help-chip"><i class="bi bi-coin"></i> Tassi di cambio</span> (o Impostazioni &rarr; Valute) è da dove arrivano i tassi:</p>
+<ul>
+  <li><strong>Aggiorna i tassi online</strong> li scarica dalla Banca Centrale Europea, più CoinGecko per le crypto.</li>
+  <li>Oppure scrivi tu una coppia. Si legge: 1 della prima valuta = tasso della seconda. Un tasso inserito a mano ha sempre la precedenza su uno scaricato.</li>
+  <li>Basta un tasso per valuta. Le coppie mancanti vengono ricavate da quelle presenti: con EUR&rarr;USD ed EUR&rarr;GBP ottieni USD&rarr;GBP.</li>
+</ul>
+<p>Con i prezzi live attivi, i tassi si aggiornano da soli ogni 12 ore.</p>
+
+<h6>Grafici TradingView</h6>
+<p>Con i grafici attivi (Impostazioni &rarr; Portafogli), ogni posizione ha un pulsante che apre un grafico TradingView incorporato. Il pulsante <i class="bi bi-arrows-fullscreen"></i> nell'intestazione del grafico gli dà tutta la finestra: il comando di schermo intero del grafico stesso non può funzionare, perché la webview dell'app tiene disattivata quella API del browser.</p>
+<p>Il simbolo mostrato è un'ipotesi (le crypto vengono quotate in USD). Se punta al mercato sbagliato, cambialo dentro il grafico.</p>
+
 <h6>Prezzi live e privacy</h6>
 <p>I prezzi live recuperano dati da API pubbliche. Tenerli spenti significa che non vengono fatte chiamate di rete per i portafogli e inserisci ogni prezzo a mano. Un banner di avviso ricorda quando i prezzi sono spenti, perché i totali che vedi sono il costo di acquisto, non il valore di mercato.</p>
 
@@ -115,7 +130,7 @@
   <li>Inserisci il <strong>simbolo</strong> (BTC, ETH, AAPL). Per i portafogli misti, scegli prima il tipo di asset.</li>
   <li>Inserisci <strong>quantità</strong>, <strong>prezzo medio</strong> e <strong>valuta</strong>.</li>
   <li>Opzionale: attiva <strong>prezzo manuale</strong> se non vuoi che Yfine lo scarichi.</li>
-  <li>Salva. La posizione compare in tabella e i totali del portafoglio si aggiornano.</li>
+  <li>Salva. La posizione compare in tabella, il suo prezzo viene scaricato subito (se i prezzi live sono attivi) e i totali del portafoglio si aggiornano.</li>
 </ol>
 
 <h6>Profitto e perdita</h6>

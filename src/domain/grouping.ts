@@ -10,6 +10,7 @@ export interface GroupableMovement {
   direction: "in" | "out";
   amount: number;
   transfer_pair_id: number | null;
+  exclude_from_stats: number; // 0|1
 }
 
 export interface DayGroup<T> {
@@ -61,8 +62,9 @@ export function groupMovementsHierarchically<T extends GroupableMovement>(
     }
 
     curDay.items.push(m);
-    // Only non-transfer rows count toward totals.
-    if (m.transfer_pair_id == null) {
+    // Only non-transfer, non-excluded rows count toward totals (matching
+    // sumMovements and the dashboard aggregates).
+    if (m.transfer_pair_id == null && m.exclude_from_stats !== 1) {
       const field = m.direction === "in" ? "totalIn" : "totalOut";
       curDay[field] = round2(curDay[field] + m.amount);
       curMonth[field] = round2(curMonth[field] + m.amount);

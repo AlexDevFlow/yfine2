@@ -7,7 +7,7 @@
     <span class="yn-help-action-icon"><i class="bi bi-palette"></i></span>
     <div class="yn-help-action-body">
       <span class="yn-help-action-label">Тема</span>
-      <span class="yn-help-action-desc">Світла, темна або системна (слідує за операційною системою). Також стиль мобільної навігації.</span>
+      <span class="yn-help-action-desc">Світла, темна або системна, а також розмір інтерфейсу та мобільна навігація.</span>
     </div>
   </div>
   <div class="yn-help-action">
@@ -21,42 +21,42 @@
     <span class="yn-help-action-icon success"><i class="bi bi-briefcase"></i></span>
     <div class="yn-help-action-body">
       <span class="yn-help-action-label">Портфелі</span>
-      <span class="yn-help-action-desc">Увімкнути чи вимкнути отримання цін у реальному часі.</span>
+      <span class="yn-help-action-desc">Ціни в реальному часі, графіки TradingView і приховування капіталу.</span>
     </div>
   </div>
   <div class="yn-help-action">
-    <span class="yn-help-action-icon warning"><i class="bi bi-wifi"></i></span>
+    <span class="yn-help-action-icon success"><i class="bi bi-coin"></i></span>
     <div class="yn-help-action-body">
-      <span class="yn-help-action-label">Мережа</span>
-      <span class="yn-help-action-desc">Увімкнути доступ із локальної мережі, щоб відкривати Yfine з інших пристроїв удома. Змінити порт сервера.</span>
+      <span class="yn-help-action-label">Валюти</span>
+      <span class="yn-help-action-desc">Обмінні курси для оцінки всього, що тримається в іншій валюті.</span>
     </div>
   </div>
   <div class="yn-help-action">
     <span class="yn-help-action-icon danger"><i class="bi bi-shield-lock"></i></span>
     <div class="yn-help-action-body">
-      <span class="yn-help-action-label">Безпека</span>
-      <span class="yn-help-action-desc">Встановити або змінити пароль, що шифрує базу даних.</span>
+      <span class="yn-help-action-label">Приватність і безпека</span>
+      <span class="yn-help-action-desc">Режим приватності, пароль шифрування бази даних і оновлення застосунку.</span>
     </div>
   </div>
   <div class="yn-help-action">
     <span class="yn-help-action-icon info"><i class="bi bi-download"></i></span>
     <div class="yn-help-action-body">
-      <span class="yn-help-action-label">Дані</span>
-      <span class="yn-help-action-desc">Експортувати дані, імпортувати копію, завантажити або очистити журнал, видалити всі дані.</span>
+      <span class="yn-help-action-label">Дані та імпорт</span>
+      <span class="yn-help-action-desc">Експорт і резервні копії, імпорт з банку чи іншого застосунку, відновлення, скидання.</span>
     </div>
   </div>
   <div class="yn-help-action">
-    <span class="yn-help-action-icon muted"><i class="bi bi-file-earmark-arrow-up"></i></span>
+    <span class="yn-help-action-icon"><i class="bi bi-list-ol"></i></span>
     <div class="yn-help-action-body">
-      <span class="yn-help-action-label">Імпорт</span>
-      <span class="yn-help-action-desc">Імпортувати рухи з банківських виписок та інших фінансових застосунків. Пресети для поширених форматів.</span>
+      <span class="yn-help-action-label">Бічне меню</span>
+      <span class="yn-help-action-desc">Показ, приховування та перевпорядкування пунктів бічного меню.</span>
     </div>
   </div>
   <div class="yn-help-action">
-    <span class="yn-help-action-icon"><i class="bi bi-puzzle"></i></span>
+    <span class="yn-help-action-icon muted"><i class="bi bi-keyboard"></i></span>
     <div class="yn-help-action-body">
-      <span class="yn-help-action-label">Плагіни</span>
-      <span class="yn-help-action-desc">Завантажити користувацькі плагіни. Звіт сканування позначає потенційно небезпечне.</span>
+      <span class="yn-help-action-label">Клавіатурні скорочення</span>
+      <span class="yn-help-action-desc">Перепризначення навігаційних скорочень або їх вимкнення.</span>
     </div>
   </div>
 </div>
@@ -72,18 +72,22 @@
   <li><strong>Базова валюта</strong>: типова, що використовується при створенні джерела чи заощадження без обраної валюти.</li>
 </ul>
 
-<h6>Мережа</h6>
-<p>Yfine за замовчуванням слухає лише на localhost. Увімкнення <strong>доступу до локальної мережі</strong> робить його доступним з інших пристроїв вашої домашньої мережі (зручно відкривати застосунок на телефоні, поки комп'ютер працює). Yfine показує URL для набору на іншому пристрої.</p>
-<p><strong>Порт сервера</strong> можна змінити, якщо типовий уже зайнятий. Після збереження з'являється напис "потрібен перезапуск".</p>
+<h6>Валюти</h6>
+<p>Yfine ніколи не змішує валюти в одному підсумку. Щоб оцінити позицію в USD усередині портфеля в EUR &mdash; або звести всі рахунки в один капітал &mdash; потрібен обмінний курс, і саме звідси курси беруться.</p>
+<ul>
+  <li><strong>Оновити курси онлайн</strong> завантажує їх з Європейського центрального банку (і з CoinGecko для криптовалют). Жодних ваших даних не надсилається.</li>
+  <li>Або додайте пару вручну: 1 першої валюти = курс другої. Введений вручну курс має перевагу над завантаженим.</li>
+  <li>Достатньо одного курсу на валюту: відсутні пари виводяться з наявних.</li>
+</ul>
 
-<h6>Безпека</h6>
+<h6>Приватність і безпека</h6>
 <p>Встановлення пароля вмикає шифрування <strong>AES-256-GCM</strong> файлу бази даних. Ключ виводиться з вашого пароля і ніколи не зберігається.</p>
 <ul>
   <li>З паролем: застосунок запитує його при запуску. База розшифровується в пам'яті та знову шифрується при виході.</li>
   <li>Без пароля: база даних, звичайний SQLite файл.</li>
 </ul>
 
-<h6>Дані: експорт, імпорт, скидання</h6>
+<h6>Дані та імпорт</h6>
 <ul>
   <li><strong>Експорт</strong>: завантажити копію JSON (лише основні дані) або повний архів <code>.yfine</code> (основні дані + плагіни + налаштування).</li>
   <li><strong>Експорт Excel / PDF</strong>: форматовано для друку чи розсилки.</li>
@@ -92,24 +96,9 @@
   <li><strong>Видалити всі дані</strong>: стирає всі джерела, рухи, портфелі, теги, повторювані, заощадження, бажання та сповіщення. Налаштування не чіпає.</li>
 </ul>
 
-<h6>Вкладка "Імпорт"</h6>
 <p>Вкладка "Імпорт", це покроковий майстер. Оберіть цільове джерело, оберіть пресет формату (наприклад, "CSV банківська виписка"), завантажте файл, зіставте колонки за потреби та перегляньте список рухів, що будуть створені. Виявлення дублікатів запускається на кроці перегляду.</p>
-
-<h6>Плагіни</h6>
-<p>Плагіни розширюють Yfine новими сторінками, пунктами меню або логікою. Щоб встановити один:</p>
-<ol class="yn-help-steps">
-  <li>Натисніть кнопку завантаження та оберіть архів плагіна.</li>
-  <li>Yfine запускає статичне сканування коду. Критичні знахідки блокують встановлення. Попередження дозволяють продовжити на ваш розсуд.</li>
-  <li>Після сканування підтвердьте встановлення.</li>
-  <li>Перезапустіть застосунок. Пункт меню плагіна з'явиться на бічній панелі.</li>
-</ol>
 
 <div class="yn-help-tip">
   <i class="bi bi-info-circle-fill"></i>
-  <div>Експортуйте дані перед будь-яким "Видалити всі дані" чи ризикованим встановленням плагіна. Архів <code>.yfine</code> містить усе необхідне, щоб повернути застосунок у поточний стан.</div>
-</div>
-
-<div class="yn-help-tip warn">
-  <i class="bi bi-exclamation-triangle-fill"></i>
-  <div>Плагіни працюють з тими ж правами, що й Yfine. Сканер позначає очевидні проблеми, але не може виявити все. Встановлюйте лише плагіни з довірених джерел.</div>
+  <div>Експортуйте дані перед будь-яким "Скинути всі дані". Архів <code>.yfine</code> містить усе потрібне, щоб повернути застосунок до поточного стану.</div>
 </div>

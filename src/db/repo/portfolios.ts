@@ -461,11 +461,46 @@ export async function portfoliosView(db: SqlExecutor, displayCurrency?: string):
   };
 }
 
-/** Net portfolio market value per base currency (for dashboard net worth). */
-export async function totalValueByCurrency(db: SqlExecutor): Promise<Record<string, number>> {
+export interface SourcePortfolioValue {
+  /** Portfolio market value attributable to this source, in the SOURCE's currency. */
+  value: number;
+  /** True when a portfolio linked here couldn't be converted (no FX rate). */
+  unconverted: boolean;
+}
+
+/**
+ * Portfolio market value per linked source, converted into that source's own
+ * currency. An account whose money sits in a portfolio used to read as 0 on the
+ * sources page even though net worth counted it — this is what the sources views
+ * add on top of the cash balance so the two agree.
+ */
+export async function valueBySource(db: SqlExecutor): Promise<Map<number, SourcePortfolioValue>> {
+  const list = await listPortfolios(db);
+  const out = new Map<number, SourcePortfolioValue>();
+  for (const p of list) {
+    const src = await getSource(db, p.source_id);
+    if (!src) continue;
+    const summary = await summarizePortfolio(db, p.id);
+    const entry = out.get(p.source_id) ?? { value: 0, unconverted: false };
+    const converted = await convOr(db, summary.total_value, p.base_currency, src.currency);
+    if (converted == null) entry.unconverted = true;
+    else entry.value = round2(entry.value + converted);
+    if (summary.has_unconverted) entry.unconverted = true;
+    out.set(p.source_id, entry);
+  }
+  return out;
+}
+
+/** Net portfolio market value per base currency (for dashboard net worth).
+ *  Portfolios linked to an excluded source are skipped along with it. */
+export async function totalValueByCurrency(
+  db: SqlExecutor,
+  excludedSourceIds: Set<number> = new Set(),
+): Promise<Record<string, number>> {
   const portfolios = await listPortfolios(db);
   const out: Record<string, number> = {};
   for (const p of portfolios) {
+    if (excludedSourceIds.has(p.source_id)) continue;
     const s = await summarizePortfolio(db, p.id);
     if (s.total_value) out[p.base_currency] = round2((out[p.base_currency] ?? 0) + s.total_value);
   }

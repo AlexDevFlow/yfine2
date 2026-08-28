@@ -8,12 +8,14 @@ import type { SqlExecutor } from "../types";
 import type { SourceRow } from "../schema-types";
 import { withTx } from "../tx";
 import { accrueSource } from "@/domain/yield";
-import { getBalance } from "./sources";
+import { getBalanceAsOf } from "./sources";
 import { createNotification } from "./notifications";
 import { processDueRecurring } from "./recurring";
 import { checkBudgetAlerts } from "./budgets";
 import { arePricesEnabled } from "./portfolios";
 import { refreshAllHoldings } from "./prices";
+import { lastRateUpdate } from "./exchange-rates";
+import { refreshRates } from "./fx";
 import { getLastPriceRefreshAt, setLastPriceRefreshAt } from "./settings";
 
 const now = () => new Date().toISOString();
@@ -39,6 +41,42 @@ export async function maybeRefreshPrices(db: SqlExecutor): Promise<number> {
   return updated;
 }
 
+/** FX rates are daily figures (ECB publishes once per working day), so half a
+ *  day between refreshes is plenty. */
+const RATE_REFRESH_THROTTLE_MS = 12 * 60 * 60 * 1000;
+
+/** In-memory guard so a failing fetch (offline, provider down) can't re-hit the
+ *  network on every 15-minute tick: nothing was written, so the DB timestamp
+ *  can't throttle it. Resets on restart, which is when a retry is wanted anyway. */
+let lastRateAttempt = 0;
+
+/**
+ * Opt-in, throttled exchange-rate refresh, riding the same preference as the
+ * price refresh (it's the app's "may reach the network" switch). No-op when the
+ * stored rates are less than 12h old. Returns the count of pairs written.
+ *
+ * Without rates the app cannot value a USD holding in an EUR portfolio at all —
+ * it excludes it and marks the total approximate — so keeping these current
+ * matters as much as keeping prices current.
+ */
+export async function maybeRefreshRates(db: SqlExecutor): Promise<number> {
+  if (!(await arePricesEnabled(db))) return 0;
+  const sinceAttempt = Date.now() - lastRateAttempt;
+  if (lastRateAttempt > 0 && sinceAttempt < RATE_REFRESH_THROTTLE_MS) return 0;
+  const last = await lastRateUpdate(db);
+  if (last) {
+    const elapsed = Date.now() - new Date(last).getTime();
+    if (Number.isFinite(elapsed) && elapsed >= 0 && elapsed < RATE_REFRESH_THROTTLE_MS) return 0;
+  }
+  lastRateAttempt = Date.now();
+  return (await refreshRates(db)).updated;
+}
+
+/** Test seam: forget the in-memory attempt guard. */
+export function resetRateRefreshThrottle(): void {
+  lastRateAttempt = 0;
+}
+
 export async function processSourceYields(db: SqlExecutor, today: string): Promise<number> {
   const sources = await db.select<SourceRow>(
     `SELECT * FROM sources WHERE yield_rate > 0 AND yield_next_date IS NOT NULL`,
@@ -54,7 +92,9 @@ export async function processSourceYields(db: SqlExecutor, today: string): Promi
         const res = await accrueSource(
           s,
           {
-            getBalance: (id) => getBalance(tx, id),
+            // Balance as of the accrual date, so catch-up periods don't earn
+            // retroactive interest on money deposited after them.
+            getBalance: (id, asOf) => getBalanceAsOf(tx, id, asOf),
             postInterest: async (id, amount, date, note) => {
               const ts = now();
               await tx.execute(

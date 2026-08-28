@@ -15,9 +15,15 @@ export interface Consolidated {
   missing: string[]; // currencies with no rate to base (excluded from total)
 }
 
-export async function consolidatedNetWorth(db: SqlExecutor, base: string): Promise<Consolidated> {
+export async function consolidatedNetWorth(
+  db: SqlExecutor,
+  base: string,
+  excludedSourceIds: number[] = [],
+): Promise<Consolidated> {
   const b = base.trim().toUpperCase();
-  const byCcy = await netWorth(db);
+  // Same exclusion as the per-currency figures above it — a total that silently
+  // counted an account the user opted out of would contradict them.
+  const byCcy = await netWorth(db, excludedSourceIds);
   let total = 0;
   const missing: string[] = [];
   for (const [ccy, amt] of Object.entries(byCcy)) {

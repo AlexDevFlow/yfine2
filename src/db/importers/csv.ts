@@ -10,7 +10,7 @@ import type { SqlExecutor } from "../types";
 import { round2 } from "@/domain/money";
 import { createMovement } from "../repo/movements";
 import { createSource, getSource } from "../repo/sources";
-import { purgeAttachmentFiles } from "../repo/attachments";
+import { stageAttachmentUnlinks } from "../repo/attachments";
 
 import ynab from "./presets/ynab.json";
 import paypal from "./presets/paypal.json";
@@ -530,8 +530,8 @@ export async function commitCsv(db: SqlExecutor, input: CommitInput): Promise<Co
 export async function undoImport(db: SqlExecutor, movementIds: number[]): Promise<number> {
   if (!movementIds.length) return 0;
   const ph = movementIds.map(() => "?").join(",");
-  // unlink on-disk attachment files first so nothing is orphaned (best-effort)
-  await purgeAttachmentFiles(db, movementIds);
+  // stage on-disk attachment files for post-commit unlink so nothing is orphaned
+  await stageAttachmentUnlinks(db, movementIds);
   await db.execute(`DELETE FROM movement_tag WHERE movement_id IN (${ph})`, movementIds);
   await db.execute(`DELETE FROM movement_attachments WHERE movement_id IN (${ph})`, movementIds);
   await db.execute(`DELETE FROM goal_allocations WHERE movement_id IN (${ph})`, movementIds);

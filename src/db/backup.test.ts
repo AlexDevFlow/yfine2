@@ -54,6 +54,28 @@ describe("backup round-trip", () => {
     expect(paired[0].c).toBe(2);
   });
 
+  it("imports a LEGACY backup whose rows lack newer NOT NULL columns (heal_default fill)", async () => {
+    // An older app's export: settings without the newer JSON blobs, movements
+    // without is_savings_contribution — all NOT NULL without a DDL default.
+    // Pre-fix this failed wholesale with "NOT NULL constraint failed".
+    const legacy = {
+      _export_mode: "all" as const,
+      sources: [{ id: 1, name: "Old", currency: "EUR", starting_balance: 10, exclude_from_stats: 0, is_savings_fund: 0, hidden_from_sources: 0, yield_rate: 0, yield_period_months: 12, created_at: "2020-01-01 00:00:00", updated_at: "2020-01-01 00:00:00" }],
+      movements: [{ id: 1, source_id: 1, amount: 5, direction: "out", date: "2020-06-01", exclude_from_stats: 0, created_at: "2020-06-01 00:00:00", updated_at: "2020-06-01 00:00:00" }],
+      settings: [{ id: 1, locale: "en", date_format: "DD/MM/YYYY", theme: "dark", hide_net_worth: 0, hotkeys_enabled: 1, created_at: "2020-01-01 00:00:00", updated_at: "2020-01-01 00:00:00" }],
+    };
+    const dst = await makeMemDb();
+    await importAll(dst.db, legacy as never);
+    expect(await count(dst.db, "sources")).toBe(1);
+    expect(await count(dst.db, "movements")).toBe(1);
+    // healed to the curated defaults instead of failing
+    const m = await dst.db.select<{ is_savings_contribution: number }>(`SELECT is_savings_contribution FROM movements`);
+    expect(m[0].is_savings_contribution).toBe(0);
+    const st = await dst.db.select<{ hotkeys_json: string; ui_scale: string }>(`SELECT hotkeys_json, ui_scale FROM settings`);
+    expect(typeof st[0].hotkeys_json).toBe("string");
+    expect(typeof st[0].ui_scale).toBe("string");
+  });
+
   it(".yfine archive round-trips through importFile", async () => {
     const src = await makeMemDb();
     await seed(src.db);
@@ -203,5 +225,37 @@ describe("previewBackup (no mutation)", () => {
     const preview = previewBackup(new TextEncoder().encode(json));
     expect(preview.format).toBe("json");
     expect(Object.fromEntries(preview.coreTables.map((c) => [c.table, c.count])).movements).toBe(3);
+  });
+});
+
+describe("backup — legacy drift heal on import", () => {
+  it("fills NOT NULL no-default columns missing from an older app's backup", async () => {
+    const src = await makeMemDb();
+    await seed(src.db);
+    await getSettings(src.db); // materialize the settings row so it's exported
+    const data = await exportAll(src.db);
+
+    // Simulate a backup exported by an OLDER legacy app: rows lack columns that
+    // are NOT NULL without a DDL default in the current schema (the exact drift
+    // migrate.ts heals in live DBs).
+    const rows = data.movements as Record<string, unknown>[];
+    for (const r of rows) delete r.is_savings_contribution;
+    const settingsRows = data.settings as Record<string, unknown>[];
+    for (const r of settingsRows) {
+      delete r.bottom_nav_json;
+      delete r.ui_scale;
+    }
+
+    const dst = await makeMemDb();
+    await importAll(dst.db, data); // must not throw NOT NULL constraint failed
+
+    const movs = await dst.db.select<{ c: number }>(
+      `SELECT COUNT(*) c FROM movements WHERE is_savings_contribution = 0`,
+    );
+    const total = await dst.db.select<{ c: number }>(`SELECT COUNT(*) c FROM movements`);
+    expect(total[0].c).toBeGreaterThan(0);
+    expect(movs[0].c).toBe(total[0].c); // healed to the default 0
+    const st = await dst.db.select<{ ui_scale: string }>(`SELECT ui_scale FROM settings LIMIT 1`);
+    expect(typeof st[0].ui_scale).toBe("string"); // healed, not NULL
   });
 });

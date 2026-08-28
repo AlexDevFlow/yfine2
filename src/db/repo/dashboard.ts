@@ -14,15 +14,25 @@ import { daysBetween, lastNMonths } from "@/lib/date";
 import { getBalancesBatch, listSources } from "./sources";
 import { totalValueByCurrency } from "./portfolios";
 
-/** Net worth per currency = source cash balances + portfolio market value (no FX mixing). */
-export async function netWorth(db: SqlExecutor): Promise<Record<string, number>> {
+/**
+ * Net worth per currency = source cash balances + portfolio market value (no FX mixing).
+ *
+ * By default ALL sources count (funds, excluded-from-stats, hidden). The user can
+ * opt individual accounts out from the dashboard; excluding a source also drops
+ * the portfolios linked to it, since "don't count this account" would otherwise
+ * still leave its investments in the total.
+ */
+export async function netWorth(db: SqlExecutor, excludedSourceIds: number[] = []): Promise<Record<string, number>> {
+  const excluded = new Set(excludedSourceIds);
   const [list, balances, portfolioValue] = await Promise.all([
     listSources(db, { includeHidden: true }),
     getBalancesBatch(db),
-    totalValueByCurrency(db),
+    totalValueByCurrency(db, excluded),
   ]);
   const out = aggregate(
-    list.map((s) => ({ currency: s.currency, balance: balances.get(s.id) ?? round2(s.starting_balance) })),
+    list
+      .filter((s) => !excluded.has(s.id))
+      .map((s) => ({ currency: s.currency, balance: balances.get(s.id) ?? round2(s.starting_balance) })),
   );
   for (const [ccy, val] of Object.entries(portfolioValue)) {
     out[ccy] = round2((out[ccy] ?? 0) + val);
@@ -62,6 +72,8 @@ export async function monthlyFlow(db: SqlExecutor, start: string, end: string): 
 export interface MonthMovement {
   id: number;
   source_name: string | null;
+  /** The row's own currency — never resolve it by source NAME (names can collide). */
+  source_currency: string | null;
   date: string;
   amount: number;
   note: string | null;
@@ -84,12 +96,13 @@ export async function monthlyMovements(
   const rows = await db.select<{
     id: number;
     source_name: string | null;
+    source_currency: string | null;
     date: string;
     amount: number;
     note: string | null;
     exclude_from_stats: number;
   }>(
-    `SELECT m.id, s.name AS source_name, m.date, m.amount, m.note, m.exclude_from_stats
+    `SELECT m.id, s.name AS source_name, s.currency AS source_currency, m.date, m.amount, m.note, m.exclude_from_stats
      FROM movements m LEFT JOIN sources s ON m.source_id = s.id
      WHERE m.direction = ? AND m.date >= ? AND m.date <= ? AND m.transfer_pair_id IS NULL
      ORDER BY m.date DESC, m.id DESC`,
@@ -98,6 +111,7 @@ export async function monthlyMovements(
   return rows.map((r) => ({
     id: r.id,
     source_name: r.source_name,
+    source_currency: r.source_currency,
     date: r.date,
     amount: r.amount,
     note: r.note,

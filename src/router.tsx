@@ -45,6 +45,8 @@ interface MovementsSearch {
   direction?: "in" | "out";
   /** Pre-applied "from" date (e.g. month start from the dashboard month modal). */
   dateFrom?: string;
+  /** Pre-applied "to" date (breakdown drill-downs carry a full range). */
+  dateTo?: string;
   /** Movement id to scroll-to-and-highlight (global search deep-link). */
   focus?: number;
   /** Open the create form immediately (dashboard quick actions). */
@@ -69,6 +71,7 @@ const movementsRoute = createRoute({
     if (tagIds.length) out.tagIds = tagIds;
     if (search.direction === "in" || search.direction === "out") out.direction = search.direction;
     if (typeof search.dateFrom === "string" && search.dateFrom) out.dateFrom = search.dateFrom;
+    if (typeof search.dateTo === "string" && search.dateTo) out.dateTo = search.dateTo;
     const focus = Number(search.focus);
     if (Number.isFinite(focus) && focus > 0) out.focus = focus;
     if (search.create === "movement" || search.create === "transfer") out.create = search.create;

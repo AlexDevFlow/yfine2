@@ -55,9 +55,12 @@ export function serializeExecutor(raw: SqlExecutor): SqlExecutor {
 }
 
 // Fallback path for non-serialized, single-connection backends (the sql.js
-// browser preview and the better-sqlite3 test executor): a depth-guarded
-// BEGIN/COMMIT is already atomic there, so no mutex is needed.
-const depth = new WeakMap<SqlExecutor, number>();
+// browser preview and the better-sqlite3 test executor). A bare depth FLAG is
+// not concurrency-safe: two overlapping withTx calls would make the second
+// silently join the first's transaction (half-committed by the first's COMMIT)
+// and then reset the flag while the second still runs. Queue whole
+// transactions through a per-executor mutex instead.
+const fallbackMutex = new WeakMap<SqlExecutor, Mutex>();
 
 /**
  * Run `fn` inside a single atomic transaction. `fn` receives the executor it
@@ -77,6 +80,9 @@ export async function withTx<T>(
     // Serialized backend: hold the mutex for the whole transaction so no other
     // statement touches the (single) connection until COMMIT/ROLLBACK.
     return st.mutex.run(async () => {
+      // Safe point (mutex held, no open tx): recreate an aging pool so sqlx's
+      // 30-min max_lifetime can never recycle the connection mid-transaction.
+      await st.raw.rotateIfStale?.();
       const tx: SqlExecutor = {
         execute: (sql, params) => st.raw.execute(sql, params),
         select: (sql, params) => st.raw.select(sql, params),
@@ -98,22 +104,33 @@ export async function withTx<T>(
     });
   }
 
-  // Non-serialized single-connection backend: depth-guarded BEGIN/COMMIT.
-  if ((depth.get(db) ?? 0) > 0) return fn(db);
-  depth.set(db, 1);
-  await db.execute("BEGIN");
-  try {
-    const result = await fn(db);
-    await db.execute("COMMIT");
-    return result;
-  } catch (e) {
-    try {
-      await db.execute("ROLLBACK");
-    } catch {
-      /* ignore rollback errors */
-    }
-    throw e;
-  } finally {
-    depth.set(db, 0);
+  // Non-serialized single-connection backend: serialize whole transactions
+  // through a per-executor mutex, handing the body a TX_SCOPED executor (same
+  // shape as the serialized branch) so nested withTx calls join the outer
+  // transaction while concurrent independent calls queue behind it.
+  let mutex = fallbackMutex.get(db);
+  if (!mutex) {
+    mutex = new Mutex();
+    fallbackMutex.set(db, mutex);
   }
+  return mutex.run(async () => {
+    const tx: SqlExecutor = {
+      execute: (sql, params) => db.execute(sql, params),
+      select: (sql, params) => db.select(sql, params),
+    };
+    TX_SCOPED.add(tx);
+    await db.execute("BEGIN");
+    try {
+      const result = await fn(tx);
+      await db.execute("COMMIT");
+      return result;
+    } catch (e) {
+      try {
+        await db.execute("ROLLBACK");
+      } catch {
+        /* ignore rollback errors */
+      }
+      throw e;
+    }
+  });
 }

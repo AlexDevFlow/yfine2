@@ -95,20 +95,34 @@
   * {
     border-color: var(--border);
   }
-  /* Chrome (controls, labels, nav, badges) shouldn't be text-selectable — only
-     real content (movement rows, figures, notes) should. Inputs stay selectable
-     because they aren't matched here. */
-  button,
-  a,
-  label,
-  kbd,
-  summary,
-  nav,
-  [role="button"],
-  [role="tab"],
-  [role="menuitem"] {
+  /* Text selection is OPT-IN, not opt-out. This is a desktop app: its chrome
+     (cards, labels, nav, headings, badges, table headers, buttons…) must never
+     highlight like a web page. `user-select: none` cascades from the root in
+     every engine the app runs on — WebKit (macOS WKWebView, Linux webkit2gtk,
+     Safari), Chromium/WebView2 (Windows), and Firefox/Gecko in a dev browser.
+     Editable fields and explicitly marked content opt back in below. */
+  html {
     -webkit-user-select: none;
     user-select: none;
+    /* iOS/WebKit long-press callout on non-selectable content */
+    -webkit-touch-callout: none;
+  }
+  /* Opt back in: anything the user types into, code/preformatted content, and
+     any subtree explicitly marked `.allow-select` (copyable content). */
+  input,
+  textarea,
+  [contenteditable]:not([contenteditable="false"]),
+  pre,
+  code,
+  .allow-select,
+  .allow-select * {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+  /* Icons/images should never start a native drag ghost either. */
+  img,
+  svg {
+    -webkit-user-drag: none;
   }
   html {
     color-scheme: light dark;

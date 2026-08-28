@@ -7,56 +7,56 @@
     <span class="yn-help-action-icon"><i class="bi bi-palette"></i></span>
     <div class="yn-help-action-body">
       <span class="yn-help-action-label">Tema</span>
-      <span class="yn-help-action-desc">Claro, oscuro o sistema (sigue el sistema operativo). También el estilo de navegación en móvil.</span>
+      <span class="yn-help-action-desc">Claro, oscuro o del sistema, más el tamaño de la interfaz y la navegación móvil.</span>
     </div>
   </div>
   <div class="yn-help-action">
     <span class="yn-help-action-icon info"><i class="bi bi-translate"></i></span>
     <div class="yn-help-action-body">
       <span class="yn-help-action-label">Idioma</span>
-      <span class="yn-help-action-desc">Idioma de la interfaz, formato de fecha y moneda base para los totales.</span>
+      <span class="yn-help-action-desc">Idioma de la interfaz, formato de fecha y divisa base para los totales.</span>
     </div>
   </div>
   <div class="yn-help-action">
     <span class="yn-help-action-icon success"><i class="bi bi-briefcase"></i></span>
     <div class="yn-help-action-body">
       <span class="yn-help-action-label">Carteras</span>
-      <span class="yn-help-action-desc">Activa o desactiva la obtención de precios en vivo.</span>
+      <span class="yn-help-action-desc">Precios en vivo, gráficos de TradingView y ocultar el patrimonio por defecto.</span>
     </div>
   </div>
   <div class="yn-help-action">
-    <span class="yn-help-action-icon warning"><i class="bi bi-wifi"></i></span>
+    <span class="yn-help-action-icon success"><i class="bi bi-coin"></i></span>
     <div class="yn-help-action-body">
-      <span class="yn-help-action-label">Red</span>
-      <span class="yn-help-action-desc">Habilita el acceso desde la red local para abrir Yfine desde otros dispositivos de casa. Cambia el puerto del servidor.</span>
+      <span class="yn-help-action-label">Divisas</span>
+      <span class="yn-help-action-desc">Los tipos de cambio usados para valorar lo que está en otra divisa.</span>
     </div>
   </div>
   <div class="yn-help-action">
     <span class="yn-help-action-icon danger"><i class="bi bi-shield-lock"></i></span>
     <div class="yn-help-action-body">
-      <span class="yn-help-action-label">Seguridad</span>
-      <span class="yn-help-action-desc">Pon o cambia la contraseña que cifra la base de datos.</span>
+      <span class="yn-help-action-label">Privacidad y seguridad</span>
+      <span class="yn-help-action-desc">Modo privacidad, contraseña que cifra la base de datos y actualizaciones.</span>
     </div>
   </div>
   <div class="yn-help-action">
     <span class="yn-help-action-icon info"><i class="bi bi-download"></i></span>
     <div class="yn-help-action-body">
-      <span class="yn-help-action-label">Datos</span>
-      <span class="yn-help-action-desc">Exporta los datos, importa una copia, descarga o limpia los registros, borra todos los datos.</span>
+      <span class="yn-help-action-label">Datos e importación</span>
+      <span class="yn-help-action-desc">Exporta y respalda tus datos, importa del banco u otra app, restaura, reinicia.</span>
     </div>
   </div>
   <div class="yn-help-action">
-    <span class="yn-help-action-icon muted"><i class="bi bi-file-earmark-arrow-up"></i></span>
+    <span class="yn-help-action-icon"><i class="bi bi-list-ol"></i></span>
     <div class="yn-help-action-body">
-      <span class="yn-help-action-label">Importaciones</span>
-      <span class="yn-help-action-desc">Importa movimientos de extractos bancarios y otras apps de finanzas. Preajustes para formatos comunes.</span>
+      <span class="yn-help-action-label">Menú lateral</span>
+      <span class="yn-help-action-desc">Muestra, oculta y reordena los elementos del menú lateral.</span>
     </div>
   </div>
   <div class="yn-help-action">
-    <span class="yn-help-action-icon"><i class="bi bi-puzzle"></i></span>
+    <span class="yn-help-action-icon muted"><i class="bi bi-keyboard"></i></span>
     <div class="yn-help-action-body">
-      <span class="yn-help-action-label">Plugins</span>
-      <span class="yn-help-action-desc">Sube plugins personalizados. Un informe de análisis marca lo que parezca no seguro.</span>
+      <span class="yn-help-action-label">Atajos de teclado</span>
+      <span class="yn-help-action-desc">Reasigna los atajos de navegación o desactívalos.</span>
     </div>
   </div>
 </div>
@@ -72,18 +72,22 @@
   <li><strong>Moneda base</strong>: la predeterminada usada al crear una fuente o un ahorro sin moneda seleccionada.</li>
 </ul>
 
-<h6>Red</h6>
-<p>Yfine solo escucha en localhost por defecto. Activar el <strong>acceso de red local</strong> lo hace accesible desde otros dispositivos de tu red doméstica (útil para abrir la app en el móvil mientras el ordenador está encendido). Yfine muestra la URL a escribir en el otro dispositivo.</p>
-<p>El <strong>puerto del servidor</strong> se puede cambiar si el predeterminado ya está ocupado. Aparece un aviso "reinicio necesario" tras guardar.</p>
+<h6>Divisas</h6>
+<p>Yfine nunca mezcla divisas en un mismo total. Para valorar una posición en USD dentro de una cartera en EUR &mdash; o para unir todas las cuentas en un solo patrimonio neto &mdash; hace falta un tipo de cambio, y de aquí salen los tipos.</p>
+<ul>
+  <li><strong>Actualizar tipos en línea</strong> los descarga del Banco Central Europeo (y de CoinGecko para las criptomonedas). No se envía ningún dato tuyo.</li>
+  <li>O añade un par a mano: 1 de la primera divisa = tipo de la segunda. Un tipo escrito a mano gana sobre uno descargado.</li>
+  <li>Basta un tipo por divisa: los pares que faltan se deducen de los que tienes.</li>
+</ul>
 
-<h6>Seguridad</h6>
+<h6>Privacidad y seguridad</h6>
 <p>Poner una contraseña activa el cifrado <strong>AES-256-GCM</strong> del archivo de base de datos. La clave se deriva de la contraseña y nunca se almacena.</p>
 <ul>
   <li>Con contraseña: la app la pide al arrancar. La base de datos se descifra en memoria y se recifra al cerrar.</li>
   <li>Sin contraseña: la base de datos es un archivo SQLite normal.</li>
 </ul>
 
-<h6>Datos: exportar, importar, restablecer</h6>
+<h6>Datos e importación</h6>
 <ul>
   <li><strong>Exportar</strong>: descarga una copia JSON (solo datos principales) o un archivo completo <code>.yfine</code> (datos + plugins + configuración).</li>
   <li><strong>Exportar Excel / PDF</strong>: formatos para imprimir o compartir.</li>
@@ -92,24 +96,9 @@
   <li><strong>Borrar todos los datos</strong>: vacía todas las fuentes, movimientos, carteras, etiquetas, recurrentes, ahorros, caprichos y notificaciones. No toca la configuración.</li>
 </ul>
 
-<h6>Pestaña Importaciones</h6>
 <p>La pestaña Importaciones es un asistente paso a paso. Elige la fuente destino, elige un preajuste de formato (por ejemplo, "CSV extracto bancario"), sube el archivo, mapea columnas si hace falta y revisa la lista de movimientos que se crearán. La detección de duplicados corre durante el paso de revisión.</p>
-
-<h6>Plugins</h6>
-<p>Los plugins extienden Yfine con nuevas páginas, entradas de menú o lógica. Para instalar uno:</p>
-<ol class="yn-help-steps">
-  <li>Pulsa el botón de subida y elige el archivo del plugin.</li>
-  <li>Yfine ejecuta un análisis estático del código. Los hallazgos críticos bloquean la instalación. Los avisos permiten continuar bajo tu criterio.</li>
-  <li>Tras el análisis, confirma para instalar.</li>
-  <li>Reinicia la app. La entrada del plugin aparece en la barra lateral.</li>
-</ol>
 
 <div class="yn-help-tip">
   <i class="bi bi-info-circle-fill"></i>
-  <div>Exporta tus datos antes de cualquier "Borrar todos los datos" o instalación arriesgada de plugin. El archivo <code>.yfine</code> contiene todo lo necesario para devolver la app al estado actual.</div>
-</div>
-
-<div class="yn-help-tip warn">
-  <i class="bi bi-exclamation-triangle-fill"></i>
-  <div>Los plugins corren con los mismos permisos que Yfine. El analizador marca los problemas evidentes, pero no puede detectarlo todo. Instala solo plugins de fuentes que consideres fiables.</div>
+  <div>Exporta tus datos antes de cualquier "Restablecer todos los datos". El archivo <code>.yfine</code> contiene todo lo necesario para devolver la app a su estado actual.</div>
 </div>

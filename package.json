@@ -1,7 +1,7 @@
 {
   "name": "yfine2",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "Yfine — a private, local-first personal-finance desktop app (Tauri 2 + SQLite).",
   "author": "AlexDevFlow",
   "license": "GPL-3.0-or-later",

@@ -6,15 +6,17 @@
  * Plain numbers behave normally (the preview only shows when an operator is
  * present). Decimal commas are normalized so "1,5+2" works in IT/ES locales.
  *
- * Safety: only `0-9 . , + - * / ( ) space` are accepted; evaluation goes through
- * `Function(...)` (NOT eval) AFTER that whitelist check, on a constrained
- * character set, and short-circuits on NaN/Infinity.
+ * Safety: only `0-9 . , + - * / ( ) space` are accepted. A small recursive-
+ * descent parser evaluates those tokens without `eval`/`Function`, so it also
+ * works under Tauri's strict Content Security Policy.
  */
 import { forwardRef, useState, type InputHTMLAttributes } from "react";
+import { useTranslation } from "react-i18next";
 import { Input } from "./input";
 
 const SAFE_RE = /^[\d\s+\-*/().,]+$/;
 const HAS_OP_RE = /[+\-*/()]/;
+const MAX_INPUT_LENGTH = 256;
 
 /**
  * Normalize a single numeric token's separators to a JS-parseable form.
@@ -29,9 +31,8 @@ const HAS_OP_RE = /[+\-*/()]/;
  *  - otherwise a single comma is a decimal comma → "." ("1,5", "12,50").
  */
 /**
- * Strip leading zeros from a token's integer part so the evaluator never sees an
- * octal literal: `Function('return (+(0125))')` throws in strict mode → the value
- * silently became 0. Keeps one digit and never touches the fraction ("0125"→"125",
+ * Strip leading zeros from a token's integer part to keep normalized numbers
+ * canonical. Keeps one digit and never touches the fraction ("0125"→"125",
  * "0.5"→"0.5", "10.05"→"10.05").
  */
 function stripIntZeros(tok: string): string {
@@ -67,26 +68,138 @@ function normalizeNumber(tok: string): string {
   return stripIntZeros(s);
 }
 
+/**
+ * Evaluate a normalized arithmetic expression without dynamic code execution.
+ * Grammar: addition/subtraction, multiplication/division, unary signs, numbers
+ * and parentheses.
+ */
+function evaluateArithmetic(input: string): number | null {
+  let pos = 0;
+  const skipSpaces = () => {
+    while (/\s/.test(input[pos] ?? "")) pos += 1;
+  };
+
+  const parseNumber = (): number | null => {
+    skipSpaces();
+    const start = pos;
+    let digits = 0;
+    while (/\d/.test(input[pos] ?? "")) {
+      pos += 1;
+      digits += 1;
+    }
+    if (input[pos] === ".") {
+      pos += 1;
+      while (/\d/.test(input[pos] ?? "")) {
+        pos += 1;
+        digits += 1;
+      }
+    }
+    if (digits === 0) return null;
+    const value = Number(input.slice(start, pos));
+    return Number.isFinite(value) ? value : null;
+  };
+
+  const parsePrimary = (): number | null => {
+    skipSpaces();
+    if (input[pos] !== "(") return parseNumber();
+    pos += 1;
+    const value = parseExpression();
+    skipSpaces();
+    if (value === null || input[pos] !== ")") return null;
+    pos += 1;
+    return value;
+  };
+
+  const parseUnary = (): number | null => {
+    skipSpaces();
+    if (input[pos] === "+" || input[pos] === "-") {
+      const sign = input[pos];
+      pos += 1;
+      const value = parseUnary();
+      if (value === null) return null;
+      return sign === "-" ? -value : value;
+    }
+    return parsePrimary();
+  };
+
+  const parseTerm = (): number | null => {
+    let value = parseUnary();
+    if (value === null) return null;
+    while (true) {
+      skipSpaces();
+      const op = input[pos];
+      if (op !== "*" && op !== "/") break;
+      pos += 1;
+      const rhs = parseUnary();
+      if (rhs === null) return null;
+      value = op === "*" ? value * rhs : value / rhs;
+      if (!Number.isFinite(value)) return null;
+    }
+    return value;
+  };
+
+  function parseExpression(): number | null {
+    let value = parseTerm();
+    if (value === null) return null;
+    while (true) {
+      skipSpaces();
+      const op = input[pos];
+      if (op !== "+" && op !== "-") break;
+      pos += 1;
+      const rhs = parseTerm();
+      if (rhs === null) return null;
+      value = op === "+" ? value + rhs : value - rhs;
+      if (!Number.isFinite(value)) return null;
+    }
+    return value;
+  }
+
+  const value = parseExpression();
+  skipSpaces();
+  return value !== null && pos === input.length && Number.isFinite(value) ? value : null;
+}
+
 /** Evaluate a whitelisted arithmetic expression, or null if invalid. Exported for tests. */
 export function evalMoneyExpr(expr: string): number | null {
-  const raw = String(expr ?? "").trim();
+  let raw = String(expr ?? "").trim();
+  if (!raw) return null;
+  if (raw.length > MAX_INPUT_LENGTH) return null;
+  // Humans type money with a currency symbol ("€50", "50 €") and spaces as
+  // thousands grouping ("1 000"). Strip any currency symbol, then close
+  // digit-to-digit gaps so grouping spaces don't split one number into two
+  // tokens — spaces around operators ("10 + 5") are untouched.
+  raw = raw.replace(/\p{Sc}/gu, "").replace(/(\d)\s+(?=\d)/g, "$1").trim();
   if (!raw) return null;
   if (!SAFE_RE.test(raw)) return null;
   // Normalize each numeric token independently so separators in "1,5+2,5" or
   // "1,000+250" are interpreted per-operand, not across the whole expression.
   const s = raw.replace(/[\d.,]+/g, normalizeNumber);
-  try {
-    // Unary plus forces numeric context; the whitelist keeps this safe.
-    const v = Function('"use strict"; return (+(' + s + "));")() as unknown;
-    if (typeof v !== "number" || !Number.isFinite(v)) return null;
-    return v;
-  } catch {
-    return null;
-  }
+  return evaluateArithmetic(s);
 }
 
-function fmt(n: number): string {
-  return String(Math.round(n * 1e6) / 1e6);
+/**
+ * Keep a controlled amount field limited to characters that can form a number
+ * or one of the supported arithmetic expressions. Currency symbols are simply
+ * removed (useful when pasting a formatted amount); any other unexpected text
+ * rejects the whole edit so `12abc34` can never silently turn into `1234`.
+ */
+export function sanitizeMoneyInput(next: string, previous = ""): string {
+  const cleaned = String(next ?? "")
+    .replace(/\p{Sc}/gu, "")
+    .replace(/[\u00a0\u202f]/g, " ");
+  return cleaned.length <= MAX_INPUT_LENGTH && (cleaned === "" || SAFE_RE.test(cleaned))
+    ? cleaned
+    : previous;
+}
+
+/** Locale-aware, ungrouped display form that remains unambiguous to the parser. */
+export function formatMoneyInputValue(n: number, locale?: string): string {
+  const rounded = Math.round(n * 1e6) / 1e6;
+  return new Intl.NumberFormat(locale, {
+    useGrouping: false,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 6,
+  }).format(rounded);
 }
 
 /**
@@ -115,6 +228,8 @@ export const MoneyInput = forwardRef<HTMLInputElement, Props>(function MoneyInpu
   { value, onValueChange, ...rest },
   ref,
 ) {
+  const { i18n } = useTranslation();
+  const locale = i18n.resolvedLanguage;
   const [preview, setPreview] = useState<{ ok: boolean; text: string } | null>(null);
 
   const recompute = (v: string) => {
@@ -123,15 +238,19 @@ export const MoneyInput = forwardRef<HTMLInputElement, Props>(function MoneyInpu
       return;
     }
     const r = evalMoneyExpr(v);
-    setPreview(r === null ? { ok: false, text: "= —" } : { ok: true, text: `= ${fmt(r)}` });
+    setPreview(
+      r === null
+        ? { ok: false, text: "= —" }
+        : { ok: true, text: `= ${formatMoneyInputValue(r, locale)}` },
+    );
   };
 
   const commit = () => {
     // Normalize ANY valid input (expression, decimal comma, or grouped number like
-    // "1.234,56") to a plain JS-parseable number on blur/Enter. Invalid input is
-    // left as-is for the user to fix.
+    // "1.234,56") to the app locale's ungrouped display form on blur/Enter.
+    // Invalid input is left as-is for the user to fix.
     const r = evalMoneyExpr(value);
-    if (r !== null) onValueChange(fmt(r));
+    if (r !== null) onValueChange(formatMoneyInputValue(r, locale));
     setPreview(null);
   };
 
@@ -143,8 +262,14 @@ export const MoneyInput = forwardRef<HTMLInputElement, Props>(function MoneyInpu
         inputMode="decimal"
         value={value}
         onChange={(e) => {
-          onValueChange(e.target.value);
-          recompute(e.target.value);
+          const next = sanitizeMoneyInput(e.target.value, value);
+          // React normally restores a controlled value after the event, but if
+          // the rejected edit equals the current state no parent render is
+          // guaranteed. Restore it eagerly so an invalid character never even
+          // flashes/sticks in the native input.
+          if (next !== e.target.value) e.currentTarget.value = next;
+          onValueChange(next);
+          recompute(next);
         }}
         onKeyDown={(e) => {
           if (e.key === "Enter" && preview?.ok) {

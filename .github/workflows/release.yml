@@ -39,8 +39,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf build-essential
 
+      # pnpm 11 — same major used for development. pnpm 10 reads the build
+      # allow-list from the `pnpm.onlyBuiltDependencies` field in package.json,
+      # pnpm 11 from `allowBuilds` in pnpm-workspace.yaml; both are kept in sync
+      # so either major approves better-sqlite3's native build (pnpm test needs
+      # it). Bump these two together, never one alone.
       - uses: pnpm/action-setup@v4
-        with: { version: 10 }
+        with: { version: 11 }
       - uses: actions/setup-node@v4
         with:
           node-version: 20

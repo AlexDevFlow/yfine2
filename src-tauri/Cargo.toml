@@ -1,6 +1,6 @@
 [package]
 name = "yfine2"
-version = "0.1.0"
+version = "0.3.0"
 description = "Yfine — a private, local-first personal-finance desktop app (Tauri 2 + SQLite)."
 authors = ["AlexDevFlow"]
 license = "GPL-3.0-or-later"
@@ -59,6 +59,11 @@ fernet = "0.2"
 # from source (vendored) on Windows AND macOS; Linux keeps the fast system OpenSSL.
 [target.'cfg(any(windows, target_os = "macos"))'.dependencies]
 openssl = { version = "0.10", features = ["vendored"] }
+
+# macOS-only: Keychain access, used to report whether a Touch ID unlock is
+# possible on this build (see src/biometric.rs).
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3"
 
 # macOS-only: dispatch2 0.3.1 (pulled transitively by tao -> tauri) overflows the
 # default macro recursion limit while expanding its bitflags bindings on current

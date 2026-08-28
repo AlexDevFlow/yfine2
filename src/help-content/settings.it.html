@@ -7,7 +7,7 @@
     <span class="yn-help-action-icon"><i class="bi bi-palette"></i></span>
     <div class="yn-help-action-body">
       <span class="yn-help-action-label">Tema</span>
-      <span class="yn-help-action-desc">Chiaro, scuro o automatico (segue il sistema operativo). Inoltre lo stile di navigazione su mobile.</span>
+      <span class="yn-help-action-desc">Chiaro, scuro o di sistema, più la dimensione dell'interfaccia e la navigazione mobile.</span>
     </div>
   </div>
   <div class="yn-help-action">
@@ -21,42 +21,42 @@
     <span class="yn-help-action-icon success"><i class="bi bi-briefcase"></i></span>
     <div class="yn-help-action-body">
       <span class="yn-help-action-label">Portafogli</span>
-      <span class="yn-help-action-desc">Attiva o disattiva il recupero dei prezzi live.</span>
+      <span class="yn-help-action-desc">Prezzi live, grafici TradingView e patrimonio nascosto di default.</span>
     </div>
   </div>
   <div class="yn-help-action">
-    <span class="yn-help-action-icon warning"><i class="bi bi-wifi"></i></span>
+    <span class="yn-help-action-icon success"><i class="bi bi-coin"></i></span>
     <div class="yn-help-action-body">
-      <span class="yn-help-action-label">Rete</span>
-      <span class="yn-help-action-desc">Abilita l'accesso dalla rete locale per aprire Yfine da altri dispositivi di casa. Cambia la porta del server.</span>
+      <span class="yn-help-action-label">Valute</span>
+      <span class="yn-help-action-desc">I tassi di cambio usati per valorizzare tutto ciò che è in un'altra valuta.</span>
     </div>
   </div>
   <div class="yn-help-action">
     <span class="yn-help-action-icon danger"><i class="bi bi-shield-lock"></i></span>
     <div class="yn-help-action-body">
-      <span class="yn-help-action-label">Sicurezza</span>
-      <span class="yn-help-action-desc">Imposta o cambia la password che cifra il database.</span>
+      <span class="yn-help-action-label">Privacy e sicurezza</span>
+      <span class="yn-help-action-desc">Modalità privacy, password che cifra il database e aggiornamenti dell'app.</span>
     </div>
   </div>
   <div class="yn-help-action">
     <span class="yn-help-action-icon info"><i class="bi bi-download"></i></span>
     <div class="yn-help-action-body">
-      <span class="yn-help-action-label">Dati</span>
-      <span class="yn-help-action-desc">Esporta i dati, importa un backup, scarica o svuota i log, ripristina tutti i dati.</span>
+      <span class="yn-help-action-label">Dati e importazione</span>
+      <span class="yn-help-action-desc">Esporta e salva i dati, importa da banca o altre app, ripristina, azzera.</span>
     </div>
   </div>
   <div class="yn-help-action">
-    <span class="yn-help-action-icon muted"><i class="bi bi-file-earmark-arrow-up"></i></span>
+    <span class="yn-help-action-icon"><i class="bi bi-list-ol"></i></span>
     <div class="yn-help-action-body">
-      <span class="yn-help-action-label">Importazioni</span>
-      <span class="yn-help-action-desc">Importa movimenti da estratti conto bancari e altre app di finanza. Preset per i formati più comuni.</span>
+      <span class="yn-help-action-label">Menu laterale</span>
+      <span class="yn-help-action-desc">Mostra, nascondi e riordina le voci del menu di sinistra.</span>
     </div>
   </div>
   <div class="yn-help-action">
-    <span class="yn-help-action-icon"><i class="bi bi-puzzle"></i></span>
+    <span class="yn-help-action-icon muted"><i class="bi bi-keyboard"></i></span>
     <div class="yn-help-action-body">
-      <span class="yn-help-action-label">Plugin</span>
-      <span class="yn-help-action-desc">Carica plugin personalizzati. Un report di scansione segnala codice potenzialmente non sicuro.</span>
+      <span class="yn-help-action-label">Scorciatoie da tastiera</span>
+      <span class="yn-help-action-desc">Riassegna le scorciatoie di navigazione o disattivale.</span>
     </div>
   </div>
 </div>
@@ -72,18 +72,22 @@
   <li><strong>Valuta base</strong>: quella predefinita usata creando una fonte o un risparmio senza valuta selezionata.</li>
 </ul>
 
-<h6>Rete</h6>
-<p>Yfine ascolta solo su localhost di default. Attivando l'<strong>accesso rete locale</strong> diventa raggiungibile da altri dispositivi della tua rete di casa (utile per aprire l'app sul telefono mentre il computer è acceso). Yfine mostra l'URL da digitare sull'altro dispositivo.</p>
-<p>La <strong>porta del server</strong> può essere cambiata se quella predefinita è già occupata. Dopo il salvataggio compare un avviso "richiesto riavvio".</p>
+<h6>Valute</h6>
+<p>Yfine non mescola mai valute diverse in un unico totale. Per valorizzare una posizione in USD dentro un portafoglio in EUR &mdash; o per unire tutti i conti in un solo patrimonio netto &mdash; serve un tasso di cambio, ed è da qui che i tassi arrivano.</p>
+<ul>
+  <li><strong>Aggiorna i tassi online</strong> li scarica dalla Banca Centrale Europea (più CoinGecko per le crypto). Non viene inviato nulla che ti riguardi.</li>
+  <li>Oppure aggiungi una coppia a mano: 1 della prima valuta = tasso della seconda. Un tasso scritto a mano ha la precedenza su uno scaricato.</li>
+  <li>Basta un tasso per valuta: le coppie mancanti vengono ricavate da quelle presenti.</li>
+</ul>
 
-<h6>Sicurezza</h6>
+<h6>Privacy e sicurezza</h6>
 <p>Impostare una password abilita la cifratura <strong>AES-256-GCM</strong> del file del database. La chiave è derivata dalla password e non viene mai memorizzata.</p>
 <ul>
   <li>Con password: l'app la chiede all'avvio. Il database viene decifrato in memoria e ricifrato alla chiusura.</li>
   <li>Senza password: il database è un normale file SQLite.</li>
 </ul>
 
-<h6>Dati: esporta, importa, ripristina</h6>
+<h6>Dati e importazione</h6>
 <ul>
   <li><strong>Esporta</strong>: scarica una copia JSON (solo dati principali) o un archivio completo <code>.yfine</code> (dati principali + plugin + impostazioni).</li>
   <li><strong>Esporta Excel / PDF</strong>: formati per stampa o condivisione.</li>
@@ -92,24 +96,9 @@
   <li><strong>Ripristina tutti i dati</strong>: cancella ogni fonte, movimento, portafoglio, etichetta, ricorrente, risparmio, sfizio e notifica. Le impostazioni restano.</li>
 </ul>
 
-<h6>Scheda Importazioni</h6>
 <p>La scheda Importazioni è una procedura guidata passo-passo. Scegli la fonte di destinazione, seleziona un preset di formato (per esempio "CSV estratto conto"), carica il file, mappa le colonne se serve e rivedi la lista dei movimenti da creare. Il riconoscimento dei duplicati avviene nel passo di revisione.</p>
-
-<h6>Plugin</h6>
-<p>I plugin estendono Yfine con nuove pagine, voci di menu o logiche. Per installarne uno:</p>
-<ol class="yn-help-steps">
-  <li>Clicca il pulsante di caricamento e scegli l'archivio del plugin.</li>
-  <li>Yfine esegue una scansione statica del codice. Le segnalazioni critiche bloccano l'installazione. Gli avvisi permettono di proseguire a tua discrezione.</li>
-  <li>Dopo la scansione, conferma per installare.</li>
-  <li>Riavvia l'app. La voce del plugin compare nella barra laterale.</li>
-</ol>
 
 <div class="yn-help-tip">
   <i class="bi bi-info-circle-fill"></i>
-  <div>Esporta i dati prima di qualsiasi "Ripristina tutti i dati" o installazione di plugin rischiosa. L'archivio <code>.yfine</code> contiene tutto il necessario per riportare l'app allo stato attuale.</div>
-</div>
-
-<div class="yn-help-tip warn">
-  <i class="bi bi-exclamation-triangle-fill"></i>
-  <div>I plugin girano con gli stessi permessi di Yfine. Lo scanner segnala i problemi evidenti, ma non può catturare tutto. Installa solo plugin da fonti che consideri affidabili.</div>
+  <div>Esporta i dati prima di ogni "Azzera tutti i dati". L'archivio <code>.yfine</code> contiene tutto il necessario per riportare l'app allo stato attuale.</div>
 </div>

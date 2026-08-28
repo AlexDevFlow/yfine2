@@ -118,3 +118,34 @@ describe("schema migration", () => {
     db.close();
   });
 });
+
+describe("auto-heal of columns added after a release", () => {
+  it("adds net_worth_excluded_json + last_seen_version to an older settings table", async () => {
+    const path = tmpDb("healcols");
+    const db = new Database(path);
+    await migrate(wrap(db));
+    // Simulate the DB of a user still on the previous build: the two newest
+    // settings columns simply don't exist there.
+    db.prepare("INSERT INTO settings (id,locale,date_format,theme,hide_net_worth,mobile_nav_mode,bottom_nav_size,ui_scale,hotkeys_enabled,hotkeys_json,nav_layout_json,bottom_nav_json,lan_access,portfolio_prices_enabled,portfolio_prices_prompted,portfolio_charts_enabled,privacy_hover_reveal,auto_update_check,saved_views_json,movement_templates_json,net_worth_excluded_json,created_at,updated_at) VALUES (1,'it','dd/mm/yyyy','dark',0,'sidebar','md','normal',1,'{}','[]','[]',0,1,1,0,1,0,'[]','[]','[3]','t','t')").run();
+    db.prepare("ALTER TABLE settings DROP COLUMN net_worth_excluded_json").run();
+    db.prepare("ALTER TABLE settings DROP COLUMN last_seen_version").run();
+    // An older build stamped its own schema fingerprint; without restoring that,
+    // migrate's fast path would skip the heal pass this test exists to exercise.
+    db.prepare("PRAGMA user_version = 123456").run();
+    expect(columnNames(db, "settings")).not.toContain("net_worth_excluded_json");
+
+    await migrate(wrap(db));
+
+    const cols = columnNames(db, "settings");
+    expect(cols).toContain("net_worth_excluded_json");
+    expect(cols).toContain("last_seen_version");
+    // Healed rows get the curated defaults, not NULL in a NOT NULL column.
+    const row = db.prepare("SELECT net_worth_excluded_json, last_seen_version, locale FROM settings WHERE id=1").get() as {
+      net_worth_excluded_json: string; last_seen_version: string | null; locale: string;
+    };
+    expect(row.net_worth_excluded_json).toBe("[]");
+    expect(row.last_seen_version).toBeNull();
+    expect(row.locale).toBe("it"); // existing preferences untouched
+    db.close();
+  });
+});

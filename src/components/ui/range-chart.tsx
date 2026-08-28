@@ -39,6 +39,8 @@ export function RangeChart({
   ranges = DEFAULT_RANGES,
   defaultRange,
   color,
+  monthDividers = true,
+  monthLabel,
 }: {
   points: ChartPoint[];
   format?: (n: number) => string;
@@ -47,6 +49,9 @@ export function RangeChart({
   ranges?: Range[];
   defaultRange?: string;
   color?: string;
+  /** Month rules + labels on the x-axis (default on — see LineChart). */
+  monthDividers?: boolean;
+  monthLabel?: (d: string) => string;
 }) {
   const { t } = useTranslation();
   const [range, setRange] = useState<string>(defaultRange ?? ranges[ranges.length - 1].key);
@@ -74,7 +79,15 @@ export function RangeChart({
           </button>
         ))}
       </div>
-      <LineChart points={series} height={height} format={format} formatDate={formatDate} color={color} />
+      <LineChart
+        points={series}
+        height={height}
+        format={format}
+        formatDate={formatDate}
+        color={color}
+        monthDividers={monthDividers}
+        monthLabel={monthLabel}
+      />
     </div>
   );
 }

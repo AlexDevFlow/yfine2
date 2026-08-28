@@ -8,22 +8,32 @@
     "core:window:allow-destroy",
     "opener:default",
     "opener:allow-reveal-item-in-dir",
-    "opener:allow-open-path",
     "sql:default",
     "sql:allow-execute",
-    "fs:allow-appdata-read-recursive",
-    "fs:allow-appdata-write-recursive",
     "fs:allow-mkdir",
     "fs:allow-write-file",
     "fs:allow-read-file",
+    "fs:allow-read-dir",
+    "fs:allow-rename",
     "fs:allow-remove",
     "fs:allow-exists",
+    {
+      "identifier": "fs:scope",
+      "allow": [
+        { "path": "$APPDATA/attachments" },
+        { "path": "$APPDATA/attachments/**" },
+        { "path": "$APPDATA/exports" },
+        { "path": "$APPDATA/exports/**" }
+      ]
+    },
     "updater:default",
     "process:allow-restart",
     {
       "identifier": "http:default",
       "allow": [
         { "url": "https://api.coingecko.com/*" },
+        { "url": "https://api.frankfurter.dev/*" },
+        { "url": "https://api.frankfurter.app/*" },
         { "url": "https://query1.finance.yahoo.com/*" },
         { "url": "https://query2.finance.yahoo.com/*" },
         { "url": "https://blockstream.info/*" },

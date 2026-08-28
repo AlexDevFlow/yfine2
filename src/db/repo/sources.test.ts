@@ -252,3 +252,51 @@ describe("DomainError", () => {
     expect(new DomainError("not_found").code).toBe("not_found");
   });
 });
+
+describe("sources — self-transfer cleanup + fund delete guard (review fixes)", () => {
+  it("merge drops transfer pairs that would collapse into self-transfers", async () => {
+    const { db } = await makeMemDb();
+    const a = await repo.createSource(db, { name: "A", currency: "EUR", starting_balance: 100 });
+    const b = await repo.createSource(db, { name: "B", currency: "EUR", starting_balance: 50 });
+    const mv = await import("./movements");
+    // internal transfer A→B plus a plain movement that must survive the merge
+    await mv.createTransfer(db, { fromSourceId: a.id, toSourceId: b.id, amount: 30, date: "2026-05-01" });
+    await mv.createMovement(db, { source_id: a.id, amount: 10, direction: "out", date: "2026-05-02" });
+
+    await repo.mergeSources(db, a.id, b.id);
+    const left = await db.select<{ c: number }>(`SELECT COUNT(*) c FROM movements WHERE transfer_pair_id IS NOT NULL`);
+    expect(left[0].c).toBe(0); // self-pair gone
+    // balance conserved: 100 + 50 − 10 (transfer was a no-op)
+    expect(await repo.getBalance(db, b.id)).toBe(140);
+    const plain = await db.select<{ c: number }>(`SELECT COUNT(*) c FROM movements`);
+    expect(plain[0].c).toBe(1); // the plain movement survived
+  });
+
+  it("delete with move_to drops collapsed self-pairs the same way", async () => {
+    const { db } = await makeMemDb();
+    const a = await repo.createSource(db, { name: "A", currency: "EUR", starting_balance: 100 });
+    const b = await repo.createSource(db, { name: "B", currency: "EUR", starting_balance: 0 });
+    const mv = await import("./movements");
+    await mv.createTransfer(db, { fromSourceId: a.id, toSourceId: b.id, amount: 40, date: "2026-05-01" });
+
+    await repo.deleteSource(db, a.id, { kind: "move_to", targetId: b.id });
+    const left = await db.select<{ c: number }>(`SELECT COUNT(*) c FROM movements`);
+    expect(left[0].c).toBe(0);
+    expect(await repo.getBalance(db, b.id)).toBe(100);
+  });
+
+  it("refuses to delete a savings fund (any action)", async () => {
+    const { db } = await makeMemDb();
+    const a = await repo.createSource(db, { name: "A", currency: "EUR", starting_balance: 100 });
+    const savings = await import("./savings");
+    await savings.createSaving(db, { fromSourceId: a.id, amount: 10, date: "2026-05-01" });
+    const fund = (await repo.listSources(db)).find((s) => s.is_savings_fund === 1)!;
+    for (const action of [
+      { kind: "delete_all" } as const,
+      { kind: "make_external" } as const,
+      { kind: "move_to", targetId: a.id } as const,
+    ]) {
+      await expect(repo.deleteSource(db, fund.id, action)).rejects.toMatchObject({ code: "fund_not_deletable" });
+    }
+  });
+});

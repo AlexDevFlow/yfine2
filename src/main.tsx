@@ -15,7 +15,10 @@ import { ConfirmProvider } from "@/components/ui/confirm";
 import { PrivacyProvider } from "@/lib/privacy";
 import { LoginScreen } from "@/components/auth/login-screen";
 import { isDbEncrypted, registerReencryptOnClose, runCrashRecovery, setRuntimePassword } from "@/lib/auth-bridge";
+import { installNoSelectGuard } from "@/lib/no-select";
 import { router } from "./router";
+
+installNoSelectGuard();
 
 const queryClient = new QueryClient({
   defaultOptions: {

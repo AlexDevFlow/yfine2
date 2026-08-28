@@ -230,3 +230,31 @@ describe("portfolioValueBySourceOverTime", () => {
     expect(out).toEqual({ [today]: 0 });
   });
 });
+
+describe("valueBySource (sources page shows portfolio money too)", () => {
+  it("attributes portfolio value to its source, converted into that source's currency", async () => {
+    const { db } = await makeMemDb();
+    const src = await createSource(db, { name: "Kraken", currency: "EUR", starting_balance: 0 });
+    const portfolioId = await pf.createPortfolio(db, { name: "Crypto", kind: "crypto", base_currency: "USD", source_id: src.id });
+    await pf.createHolding(db, {
+      portfolio_id: portfolioId, asset_class: "crypto", symbol: "BTC", quantity: 2,
+      avg_cost: 100, currency: "USD", manual_price: true, last_price: 200,
+    });
+    await upsertRate(db, "EUR", "USD", 1.25); // 400 USD -> 320 EUR
+
+    const map = await pf.valueBySource(db);
+    expect(map.get(src.id)).toEqual({ value: 320, unconverted: false });
+  });
+
+  it("flags a source whose portfolio currency has no rate rather than mixing currencies", async () => {
+    const { db } = await makeMemDb();
+    const src = await createSource(db, { name: "Bank", currency: "EUR", starting_balance: 0 });
+    const portfolioId = await pf.createPortfolio(db, { name: "US stocks", kind: "stocks", base_currency: "USD", source_id: src.id });
+    await pf.createHolding(db, {
+      portfolio_id: portfolioId, asset_class: "stock", symbol: "AAPL", quantity: 1,
+      avg_cost: 100, currency: "USD", manual_price: true, last_price: 150,
+    });
+
+    expect(await pf.valueBySource(db)).toEqual(new Map([[src.id, { value: 0, unconverted: true }]]));
+  });
+});

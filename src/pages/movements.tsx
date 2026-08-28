@@ -1,4 +1,4 @@
-import { ArrowDownLeft, ArrowLeftRight, ArrowUpRight, Bookmark, CalendarDays, Check, ChevronDown, ChevronRight, EyeOff, Hash, Layers, ListChecks, Paperclip, Pencil, Plus, Repeat, Scale, Search, SlidersHorizontal, Tag as TagIcon, Trash2, X, Zap } from "lucide-react";
+import { ArrowDownLeft, ArrowLeftRight, ArrowUpRight, Bookmark, CalendarDays, Check, ChevronDown, ChevronRight, EyeOff, Hash, Layers, ListChecks, Paperclip, Pencil, PieChart, Plus, Repeat, Scale, Search, SlidersHorizontal, Tag as TagIcon, Trash2, X, Zap } from "lucide-react";
 import { getRouteApi } from "@tanstack/react-router";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -9,6 +9,7 @@ import { DateInput } from "@/components/ui/date-input";
 import { MoneyInput, evalMoneyExpr } from "@/components/ui/money-input";
 import { Modal } from "@/components/ui/modal";
 import { SplitForm } from "@/components/split-form";
+import { BreakdownModal } from "@/components/breakdown-panel";
 import { MovementsCalendar } from "./movements-calendar";
 import { AttachmentsModal } from "./movements-attachments";
 import { isPreviewDb } from "@/db/connection";
@@ -109,6 +110,7 @@ function SummaryBand({
   locale,
   activeDir,
   onPick,
+  onBreakdown,
 }: {
   totalIn: number;
   totalOut: number;
@@ -120,6 +122,8 @@ function SummaryBand({
   activeDir: string;
   /** Click a card to filter the list by that direction ("" clears it). */
   onPick: (dir: string) => void;
+  /** Open the breakdown for a direction (the little chart button on each card). */
+  onBreakdown: (dir: "in" | "out") => void;
 }) {
   const { t } = useTranslation();
   const net = Math.round((totalIn - totalOut) * 100) / 100;
@@ -134,6 +138,7 @@ function SummaryBand({
       icon: <ArrowUpRight className="h-3.5 w-3.5" />,
       tone: "in" as const,
       dir: "in",
+      analyse: "in" as const,
       hint: t("filter_income_hint", { defaultValue: "Show only income" }),
       value: <span className="text-positive">+{money(totalIn)}</span>,
     },
@@ -143,6 +148,7 @@ function SummaryBand({
       icon: <ArrowDownLeft className="h-3.5 w-3.5" />,
       tone: "out" as const,
       dir: "out",
+      analyse: "out" as const,
       hint: t("filter_expense_hint", { defaultValue: "Show only expenses" }),
       value: <span className="text-negative">−{money(totalOut)}</span>,
     },
@@ -152,6 +158,7 @@ function SummaryBand({
       icon: <Scale className="h-3.5 w-3.5" />,
       tone: "net" as const,
       dir: "",
+      analyse: "out" as const,
       hint: t("filter_all_hint", { defaultValue: "Show all directions" }),
       value: <span className={net > 0 ? "text-positive" : net < 0 ? "text-negative" : "text-foreground"}>{signed(net)}</span>,
       sub: pct != null ? (
@@ -166,6 +173,7 @@ function SummaryBand({
       icon: <Hash className="h-3.5 w-3.5" />,
       tone: "count" as const,
       dir: "",
+      analyse: "out" as const,
       hint: t("filter_all_hint", { defaultValue: "Show all directions" }),
       value: <span className="text-foreground">{count}</span>,
       sub: count > 0 ? <span>{t("avg_per_movement", { defaultValue: "avg {{v}}", v: money(avg) })}</span> : null,
@@ -195,10 +203,21 @@ function SummaryBand({
             onClick={() => onPick(c.dir === activeDir ? "" : c.dir)}
             onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onPick(c.dir === activeDir ? "" : c.dir); } }}
             className={cn(
-              "cursor-pointer select-none p-4 outline-none transition-shadow focus-visible:ring-2 focus-visible:ring-ring hover:shadow-[var(--shadow-pop)]",
+              "relative cursor-pointer select-none p-4 outline-none transition-shadow focus-visible:ring-2 focus-visible:ring-ring hover:shadow-[var(--shadow-pop)]",
               active && "ring-1 ring-primary/50",
             )}
           >
+            {/* Analyse this total: charts of where the money went. Stops the
+                click from also toggling the card's direction filter. */}
+            <button
+              type="button"
+              title={t("breakdown_hint", { defaultValue: "See where the money went" })}
+              aria-label={t("breakdown", { defaultValue: "Breakdown" })}
+              onClick={(e) => { e.stopPropagation(); onBreakdown(c.analyse); }}
+              className="absolute right-2 top-2 grid h-7 w-7 place-items-center rounded-lg text-muted-2 transition-colors hover:bg-surface-2 hover:text-primary"
+            >
+              <PieChart className="h-4 w-4" />
+            </button>
             <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted">
               <span className={cn("grid h-6 w-6 shrink-0 place-items-center rounded-lg", iconTone[c.tone])}>{c.icon}</span>
               {c.label}
@@ -372,7 +391,7 @@ export function MovementsPage() {
   const errText = useErrorText();
   // Deep-link search params: ?tagIds= (budget card), ?direction=&dateFrom=
   // (dashboard month modal), ?focus= (global search scroll-and-highlight).
-  const { tagIds: initialTagIds, direction: initialDir, dateFrom: initialDateFrom, focus: focusId, create: createParam, source_id: createSourceId } = movementsRouteApi.useSearch();
+  const { tagIds: initialTagIds, direction: initialDir, dateFrom: initialDateFrom, dateTo: initialDateTo, focus: focusId, create: createParam, source_id: createSourceId } = movementsRouteApi.useSearch();
   const navigate = movementsRouteApi.useNavigate();
 
   const [q, setQ] = useState("");
@@ -380,11 +399,13 @@ export function MovementsPage() {
   const [filterDir, setFilterDir] = useState(initialDir ?? "");
   const [showFilters, setShowFilters] = useState(!!initialDateFrom);
   const [dateFrom, setDateFrom] = useState(initialDateFrom ?? "");
-  const [dateTo, setDateTo] = useState("");
+  const [dateTo, setDateTo] = useState(initialDateTo ?? "");
   const [amtMin, setAmtMin] = useState("");
   const [amtMax, setAmtMax] = useState("");
   const [filterTagIds, setFilterTagIds] = useState<number[]>(initialTagIds ?? []);
   const [tagMatch, setTagMatch] = useState<"or" | "and">("or");
+  // Which direction the breakdown dialog is analysing (null = closed).
+  const [breakdownDir, setBreakdownDir] = useState<"in" | "out" | null>(null);
   // The list is grouped by year/month/day, which only reads correctly when the
   // whole filtered set is loaded (otherwise per-period rollups reflect a single
   // page and disagree with the KPI cards). So we load everything up to a generous
@@ -463,6 +484,11 @@ export function MovementsPage() {
   // strip the param so clicking the same action again re-triggers it.
   useEffect(() => {
     if (!createParam) return;
+    // On a cold navigation sources may not have resolved yet — deciding the
+    // transfer guard (or stripping the param) before they load would silently
+    // drop the deep link. Wait for the query; the effect re-runs on data.
+    if (createParam === "transfer" && sources === undefined) return;
+    setFormError(undefined); // don't carry a stale error from a previous form
     if (createParam === "movement") {
       // The sources page "+" action deep-links a source to pre-select.
       const prefill: MovementFormValues | undefined =
@@ -470,9 +496,13 @@ export function MovementsPage() {
           ? { source_id: createSourceId, amount: 0, direction: "out", date: todayISO(), note: "", tagIds: [] }
           : undefined;
       setMvModal({ open: true, prefill });
-    } else if (createParam === "transfer") setTrModal({ open: true });
+    } else if (createParam === "transfer" && realSources.length >= 2) {
+      // Same guard as the toolbar Transfer button — fewer than 2 real sources
+      // makes the transfer modal unusable.
+      setTrModal({ open: true });
+    }
     void navigate({ to: "/movements", search: (prev) => ({ ...prev, create: undefined, source_id: undefined }), replace: true });
-  }, [createParam, createSourceId, navigate]);
+  }, [createParam, createSourceId, navigate, realSources, sources]);
   const [deleting, setDeleting] = useState<EnrichedMovement>();
   const [recurringFrom, setRecurringFrom] = useState<EnrichedMovement>();
   const [recFreq, setRecFreq] = useState("monthly");
@@ -616,7 +646,11 @@ export function MovementsPage() {
     const m = byId(id);
     if (m) { setRecFreq("monthly"); setRecApplyMode("confirm"); setRecurringFrom(m); }
   }, [byId]);
-  const rowToggleExclude = useCallback((id: number) => toggleExclude.mutate(id), [toggleExclude]);
+  // useMutation returns a NEW object every render — depend on the stable
+  // `mutate` fn (destructured), or this callback changes identity each render
+  // and defeats the row memoization above.
+  const { mutate: toggleExcludeMutate } = toggleExclude;
+  const rowToggleExclude = useCallback((id: number) => toggleExcludeMutate(id), [toggleExcludeMutate]);
   const rowAttach = useCallback((id: number) => { const m = byId(id); if (m) setAttachFor(m); }, [byId]);
 
   const submitMovement = (v: MovementFormValues) => {
@@ -741,8 +775,21 @@ export function MovementsPage() {
           locale={locale}
           activeDir={filterDir}
           onPick={setFilterDir}
+          onBreakdown={setBreakdownDir}
         />
       )}
+
+      {/* Breakdown of the same scope the KPI band summarises (filters minus the
+          text search), so the charts and the cards can never disagree. */}
+      <BreakdownModal
+        open={breakdownDir != null}
+        onClose={() => setBreakdownDir(null)}
+        baseFilters={sumsFilters}
+        initialDirection={breakdownDir ?? "out"}
+        defaultPeriod={dateFrom || dateTo ? "as_filtered" : "all"}
+        locale={locale}
+        dateFormat={prefs?.date_format}
+      />
 
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative min-w-[180px] flex-1">

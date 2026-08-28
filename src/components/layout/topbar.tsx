@@ -6,6 +6,7 @@ import { Brand } from "./brand";
 import { ALL_NAV } from "./nav";
 import { ThemeToggle } from "@/components/theme/theme-toggle";
 import { PrivacyControl } from "./privacy-control";
+import { ProfileSwitcher } from "./profile-switcher";
 import { cn } from "@/lib/cn";
 import { useRelativeTime } from "@/lib/use-relative-time";
 import {
@@ -219,6 +220,7 @@ export function Topbar({
         <PrivacyControl />
         <NotificationBell />
         <ThemeToggle />
+        <ProfileSwitcher />
       </div>
     </header>
   );

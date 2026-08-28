@@ -17,6 +17,24 @@ export async function isDbEncrypted(): Promise<boolean> {
 export async function isPasswordSet(): Promise<boolean> {
   return isTauri() ? invoke<boolean>("is_password_set") : false;
 }
+export interface BiometricStatus {
+  available: boolean;
+  /** "ok" | "unsupported_platform" | "needs_signing" | "no_biometry" | "error" */
+  reason: string;
+  code: number | null;
+}
+
+/** Whether this build can unlock with Touch ID. See src-tauri/src/biometric.rs
+ *  for why an unsigned bundle can't (and why we don't fake it). */
+export async function biometricStatus(): Promise<BiometricStatus> {
+  if (!isTauri()) return { available: false, reason: "unsupported_platform", code: null };
+  try {
+    return await invoke<BiometricStatus>("biometric_status");
+  } catch {
+    return { available: false, reason: "error", code: null };
+  }
+}
+
 export async function authLogin(password: string): Promise<boolean> {
   return invoke<boolean>("auth_login", { password });
 }
@@ -46,9 +64,66 @@ async function encryptDb(password: string): Promise<void> {
   return invoke<void>("encrypt_db", { password });
 }
 
+/**
+ * Close every tauri-plugin-sql pool (guest command `plugin:sql|close`; omitting
+ * `db` closes ALL pools — covered by `sql:default`'s allow-close) so the Rust
+ * snapshot reads a settled, single-file database instead of one that is still
+ * open with an active journal. Best-effort here: the hardened `encrypt_db`
+ * command closes the pools Rust-side too — this just front-runs it.
+ */
+async function closeSqlPools(): Promise<void> {
+  try {
+    await invoke<boolean>("plugin:sql|close");
+  } catch {
+    /* encrypt_db closes the pools itself */
+  }
+}
+
+/**
+ * Blocking user-visible failure notice. No dialog plugin is installed, so use
+ * the webview-native alert (synchronous/blocking); always log too in case
+ * alert is unavailable on the platform.
+ */
+function reportEncryptFailure(err: unknown): void {
+  console.error("[yfine] database encryption failed:", err);
+  const message =
+    "Yfine could not encrypt your database.\n\n" +
+    `${String(err)}\n\n` +
+    "Your data is still stored UNENCRYPTED on disk and the window was kept open. " +
+    "Try closing again; if the problem persists, back up your data before quitting.";
+  try {
+    window.alert(message);
+  } catch {
+    /* headless/odd webview — the console.error above is the fallback */
+  }
+}
+
 let runtimePassword: string | null = null;
 export function setRuntimePassword(pw: string | null): void {
   runtimePassword = pw;
+}
+
+/**
+ * Re-encrypt the active profile's working DB before switching to another
+ * profile (same guarantee as the on-close hook, but without closing). No-op
+ * when no runtime password is held. Clears the runtime password either way —
+ * after the switch reload it would belong to the wrong profile.
+ */
+export async function encryptForProfileSwitch(): Promise<void> {
+  if (!isTauri()) return;
+  const pw = runtimePassword;
+  runtimePassword = null;
+  if (!pw) return;
+  await closeSqlPools(); // settle yfine.db before the snapshot
+  try {
+    await encryptDb(pw);
+  } catch (err) {
+    // Non-fatal for the switch: the unlock marker keeps the plaintext canonical
+    // and the next unlock/clean close re-encrypts — but never swallow silently
+    // (the switch reload proceeds either way; Rust drops the session key on
+    // profile_set_active so this password can't leak onto the next profile).
+    console.error("[yfine] profile-switch encryption failed; database left unencrypted:", err);
+  }
 }
 
 let closeHookRegistered = false;
@@ -63,12 +138,24 @@ export async function registerReencryptOnClose(): Promise<void> {
       // Re-encrypt whenever a runtime password is held — set on unlock AND on
       // enabling/changing the password during this session (gap 4), so a DB that
       // was made password-protected mid-session still gets encrypted on close.
+      // This hook only covers window-close paths; Cmd+Q / File→Quit never emit
+      // CloseRequested — those are handled Rust-side (RunEvent::ExitRequested
+      // runs the same hardened routine with the Rust-held session password).
       if (!runtimePassword) return;
       event.preventDefault();
+      // Settle the DB file before the Rust snapshot (encrypt_db also closes the
+      // pools itself; doing it here too keeps the fast path safe even if the
+      // Rust-side close were ever to time out).
+      await closeSqlPools();
       try {
         await encryptDb(runtimePassword);
-      } catch {
-        /* best-effort; the .enc is only replaced atomically on success */
+      } catch (err) {
+        // Never swallow this: the DB is still PLAINTEXT on disk. Tell the user
+        // with a blocking notice and do NOT destroy the window — closing again
+        // re-runs this hook (a retry), and the unlock marker keeps the
+        // plaintext canonical if they force-quit instead.
+        reportEncryptFailure(err);
+        return;
       }
       runtimePassword = null;
       await win.destroy();

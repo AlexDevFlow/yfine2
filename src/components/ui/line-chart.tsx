@@ -15,6 +15,8 @@ export function LineChart({
   points,
   format = (n) => n.toFixed(2),
   formatDate = (d) => d,
+  monthDividers = false,
+  monthLabel = (d) => d.slice(0, 7),
   height = 160,
   className,
   color,
@@ -22,6 +24,12 @@ export function LineChart({
   points: ChartPoint[];
   format?: (n: number) => string;
   formatDate?: (d: string) => string;
+  /** Draw faint vertical rules + short labels at each month boundary on the x-axis,
+   *  so the line reads as a timeline instead of an anonymous curve. Mirrors
+   *  MultiLineChart, which the dashboard net-worth chart already uses. */
+  monthDividers?: boolean;
+  /** Short month label for a divider (e.g. "Jan"). Receives the boundary's ISO date. */
+  monthLabel?: (d: string) => string;
   height?: number;
   className?: string;
   /** Stroke/fill color. Defaults to the primary token. */
@@ -49,12 +57,14 @@ export function LineChart({
 
   const padX = 6;
   const padY = 12;
+  // Reserve a little extra bottom space for the month labels when dividers are on.
+  const padBottom = monthDividers ? 18 : padY;
   const n = points.length;
   const min = Math.min(...points.map((p) => p.value));
   const max = Math.max(...points.map((p) => p.value));
   const span = max - min || 1;
   const innerW = Math.max(1, w - padX * 2);
-  const innerH = height - padY * 2;
+  const innerH = height - padY - padBottom;
 
   const x = (i: number) => (n <= 1 ? padX + innerW / 2 : padX + (i / (n - 1)) * innerW);
   const y = (v: number) => padY + innerH - ((v - min) / span) * innerH;
@@ -65,7 +75,21 @@ export function LineChart({
   }
 
   const linePts = points.map((p, i) => `${x(i).toFixed(1)},${y(p.value).toFixed(1)}`).join(" ");
-  const areaPts = `${padX},${height - padY} ${linePts} ${(padX + innerW).toFixed(1)},${height - padY}`;
+  const baseline = padY + innerH;
+  const areaPts = `${padX},${baseline} ${linePts} ${(padX + innerW).toFixed(1)},${baseline}`;
+
+  // Month boundaries: each index where the YYYY-MM changes (plus the first point).
+  const monthBounds: { i: number; iso: string }[] = [];
+  if (monthDividers) {
+    let prev = "";
+    for (let i = 0; i < n; i++) {
+      const ym = points[i].date.slice(0, 7);
+      if (ym !== prev) {
+        monthBounds.push({ i, iso: points[i].date });
+        prev = ym;
+      }
+    }
+  }
   // Per-instance unique id: a value-derived id collides when two charts share the
   // same point count + rounded min/max, making url(#gid) resolve to the first def.
   const gid = `lc${uid.replace(/:/g, "")}`;
@@ -101,6 +125,25 @@ export function LineChart({
             <stop offset="100%" stopColor={stroke} stopOpacity="0" />
           </linearGradient>
         </defs>
+        {/* Month dividers sit behind the line: a faint rule per month start plus a
+            short label, skipped when its segment is too narrow to read. */}
+        {monthBounds.map((b, k) => {
+          const bx = x(b.i);
+          const nextX = k + 1 < monthBounds.length ? x(monthBounds[k + 1].i) : padX + innerW;
+          const wide = nextX - bx >= 22;
+          return (
+            <g key={`m${b.i}`}>
+              {b.i > 0 && (
+                <line x1={bx} y1={padY} x2={bx} y2={baseline} stroke="var(--border)" strokeWidth="1" opacity="0.6" />
+              )}
+              {wide && (
+                <text x={bx + 3} y={height - 5} fontSize="9" fill="var(--muted-2)" className="select-none">
+                  {monthLabel(b.iso)}
+                </text>
+              )}
+            </g>
+          );
+        })}
         <polyline points={areaPts} fill={`url(#${gid})`} stroke="none" />
         <polyline
           points={linePts}
@@ -112,7 +155,7 @@ export function LineChart({
         />
         {hp && (
           <>
-            <line x1={hx} y1={padY} x2={hx} y2={height - padY} stroke="var(--border-strong)" strokeWidth="1" strokeDasharray="3 3" />
+            <line x1={hx} y1={padY} x2={hx} y2={baseline} stroke="var(--border-strong)" strokeWidth="1" strokeDasharray="3 3" />
             <circle cx={hx} cy={hy} r="4" fill={stroke} stroke="var(--surface)" strokeWidth="2" />
           </>
         )}
