@@ -13,6 +13,7 @@ import type { SourceRow } from "../schema-types";
 import { DomainError } from "../errors";
 import { round2 } from "@/domain/money";
 import { resyncYieldSchedule } from "@/domain/yield";
+import { validateName } from "@/domain/validators";
 import { todayISO } from "@/lib/date";
 import { stageAttachmentUnlinks } from "./attachments";
 
@@ -103,21 +104,45 @@ export interface NewSource {
   yield_period_months?: number;
 }
 
+/**
+ * Accounts may hold ANY currency code (the FX module reports the ones no
+ * provider quotes), so the check here is shape, not an allow-list: a blank or
+ * "€" currency would make a source no rule, budget or fund can ever match.
+ */
+function normalizeSourceCurrency(raw: string): string {
+  const c = (raw ?? "").trim().toUpperCase();
+  if (!/^[A-Z0-9]{2,5}$/.test(c)) throw new DomainError("invalid_currency");
+  return c;
+}
+
+function checkYield(rate: number, period: number): void {
+  if (!Number.isFinite(rate) || rate < 0) throw new DomainError("invalid_amount");
+  if (!Number.isInteger(period) || period < 1) throw new DomainError("invalid_range");
+}
+
+function checkBalance(v: number): number {
+  if (!Number.isFinite(v)) throw new DomainError("invalid_amount");
+  return round2(v);
+}
+
 export async function createSource(
   db: SqlExecutor,
   data: NewSource,
   today: string = todayISO(),
 ): Promise<SourceRow> {
-  const currency = data.currency.trim().toUpperCase();
+  const name = validateName(data.name);
+  const currency = normalizeSourceCurrency(data.currency);
   const rate = data.yield_rate ?? 0;
   const period = data.yield_period_months ?? 12;
+  checkYield(rate, period);
+  const startingBalance = checkBalance(data.starting_balance ?? 0);
   const nextDate = resyncYieldSchedule(rate, period, null, today);
   const ts = now();
   const rows = await db.select<{ id: number }>(
     `INSERT INTO sources
       (name,currency,starting_balance,exclude_from_stats,is_savings_fund,hidden_from_sources,yield_rate,yield_period_months,yield_next_date,yield_last_date,created_at,updated_at)
      VALUES (?,?,?,?,0,0,?,?,?,NULL,?,?) RETURNING id`,
-    [data.name, currency, data.starting_balance ?? 0, data.exclude_from_stats ? 1 : 0, rate, period, nextDate, ts, ts],
+    [name, currency, startingBalance, data.exclude_from_stats ? 1 : 0, rate, period, nextDate, ts, ts],
   );
   return (await getSource(db, rows[0].id))!;
 }
@@ -147,8 +172,8 @@ export async function updateSource(
     params.push(val);
   };
 
-  if (patch.name !== undefined) set("name", patch.name);
-  const newCurrency = patch.currency !== undefined ? patch.currency.trim().toUpperCase() : cur.currency;
+  if (patch.name !== undefined) set("name", validateName(patch.name));
+  const newCurrency = patch.currency !== undefined ? normalizeSourceCurrency(patch.currency) : cur.currency;
   const currencyChanged = newCurrency !== cur.currency;
   if (currencyChanged) {
     // A fund IS its currency: "one fund per currency" and every savings/goal
@@ -167,9 +192,12 @@ export async function updateSource(
   } else if (patch.currency !== undefined) {
     set("currency", newCurrency);
   }
-  if (patch.starting_balance !== undefined) set("starting_balance", patch.starting_balance);
+  if (patch.starting_balance !== undefined) set("starting_balance", checkBalance(patch.starting_balance));
   if (patch.exclude_from_stats !== undefined)
     set("exclude_from_stats", patch.exclude_from_stats ? 1 : 0);
+  if (patch.yield_rate !== undefined || patch.yield_period_months !== undefined) {
+    checkYield(patch.yield_rate ?? cur.yield_rate, patch.yield_period_months ?? cur.yield_period_months);
+  }
   if (patch.yield_rate !== undefined) set("yield_rate", patch.yield_rate);
   if (patch.yield_period_months !== undefined)
     set("yield_period_months", patch.yield_period_months);

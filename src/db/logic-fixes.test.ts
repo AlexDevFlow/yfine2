@@ -825,3 +825,30 @@ describe("manual holding prices", () => {
     expect((await db.select<{ c: number }>(`SELECT COUNT(*) c FROM holding_price_snapshots`))[0].c).toBe(1);
   });
 });
+
+describe("sources, goals and whims validate their inputs at the boundary", () => {
+  it("rejects blank names and malformed currency codes; rounds balances and targets", async () => {
+    const { db } = await makeMemDb();
+    await expect(sources.createSource(db, { name: "   ", currency: "EUR" })).rejects.toMatchObject({ code: "invalid_name" });
+    await expect(sources.createSource(db, { name: "A", currency: "€" })).rejects.toMatchObject({ code: "invalid_currency" });
+    await expect(sources.createSource(db, { name: "A", currency: "" })).rejects.toMatchObject({ code: "invalid_currency" });
+    await expect(sources.createSource(db, { name: "A", currency: "EUR", yield_rate: -1 })).rejects.toMatchObject({ code: "invalid_amount" });
+    await expect(sources.createSource(db, { name: "A", currency: "EUR", yield_period_months: 0 })).rejects.toMatchObject({ code: "invalid_range" });
+    const s = await sources.createSource(db, { name: " Bank ", currency: " xdb ", starting_balance: 10.005 });
+    expect(s.name).toBe("Bank");
+    expect(s.currency).toBe("XDB"); // any well-formed code is allowed (the FX module reports unquoted ones)
+    expect(s.starting_balance).toBe(10.01);
+    await expect(sources.updateSource(db, s.id, { name: "" })).rejects.toMatchObject({ code: "invalid_name" });
+
+    const acct = await sources.createSource(db, { name: "A", currency: "EUR", starting_balance: 1000 });
+    await expect(goals.createGoal(db, { name: " ", target_amount: 10, currency: "EUR" })).rejects.toMatchObject({ code: "invalid_name" });
+    const gid = await goals.createGoal(db, { name: "Trip", target_amount: 99.999, currency: "EUR" });
+    expect((await goals.getGoal(db, gid))!.target_amount).toBe(100);
+    await goals.allocate(db, gid, { fromSourceId: acct.id, amount: 10 / 3, date: "2026-05-01" });
+    const [alloc] = await goals.listAllocations(db, gid);
+    expect(alloc.amount).toBe(3.33);
+    expect(await sources.getBalance(db, acct.id)).toBe(996.67); // legs and allocation row agree
+
+    await expect(whims.createWhim(db, { name: "", amount: 5, currency: "EUR" })).rejects.toMatchObject({ code: "invalid_name" });
+  });
+});

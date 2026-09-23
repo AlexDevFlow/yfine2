@@ -7,6 +7,7 @@
 import type { SqlExecutor } from "../types";
 import { DomainError } from "../errors";
 import { round2 } from "@/domain/money";
+import { validateName } from "@/domain/validators";
 import { todayISO } from "@/lib/date";
 import { getSource } from "./sources";
 import { closeGoal, createGoal, getGoal } from "./goals";
@@ -65,7 +66,7 @@ export async function createWhim(db: SqlExecutor, data: NewWhim): Promise<number
   const rows = await db.select<{ id: number }>(
     `INSERT INTO whims (name,amount,currency,priority,source_id,status,note,url,purchased_at,linked_goal_id,created_at,updated_at)
      VALUES (?,?,?,?,?, 'pending', ?,?, NULL, NULL, ?,?) RETURNING id`,
-    [data.name, data.amount, data.currency.trim().toUpperCase(), data.priority ?? "medium", data.source_id ?? null, data.note ?? null, data.url ?? null, ts, ts],
+    [validateName(data.name), data.amount, data.currency.trim().toUpperCase(), data.priority ?? "medium", data.source_id ?? null, data.note ?? null, data.url ?? null, ts, ts],
   );
   return rows[0].id;
 }
@@ -92,7 +93,7 @@ export async function updateWhim(db: SqlExecutor, id: number, patch: WhimPatch):
   const sets: string[] = [];
   const params: unknown[] = [];
   const set = (c: string, v: unknown) => (sets.push(`${c} = ?`), params.push(v));
-  if (patch.name !== undefined) set("name", patch.name);
+  if (patch.name !== undefined) set("name", validateName(patch.name));
   if (patch.amount !== undefined) set("amount", patch.amount);
   if (patch.currency !== undefined) set("currency", patch.currency.trim().toUpperCase());
   if (patch.priority !== undefined) set("priority", patch.priority);

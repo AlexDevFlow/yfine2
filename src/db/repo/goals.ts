@@ -8,7 +8,7 @@
 import type { SqlExecutor } from "../types";
 import { DomainError } from "../errors";
 import { round2 } from "@/domain/money";
-import { validateDate } from "@/domain/validators";
+import { validateDate, validateName } from "@/domain/validators";
 import { todayISO } from "@/lib/date";
 import { ensureFundForCurrency, getSource } from "./sources";
 import { createTransferPair, deleteMovementCascade } from "./transfers";
@@ -51,7 +51,9 @@ export interface NewGoal {
 }
 
 export async function createGoal(db: SqlExecutor, data: NewGoal): Promise<number> {
-  if (!(data.target_amount > 0)) throw new DomainError("invalid_amount");
+  const name = validateName(data.name);
+  const target = round2(data.target_amount);
+  if (!(target > 0)) throw new DomainError("invalid_amount");
   if (data.target_date != null) validateDate(data.target_date);
   const currency = data.currency.trim().toUpperCase();
 
@@ -74,7 +76,7 @@ export async function createGoal(db: SqlExecutor, data: NewGoal): Promise<number
   const rows = await db.select<{ id: number }>(
     `INSERT INTO goals (name,target_amount,currency,target_date,source_id,status,note,linked_whim_id,created_at,updated_at)
      VALUES (?,?,?,?,?,'active',?,?,?,?) RETURNING id`,
-    [data.name, data.target_amount, currency, data.target_date ?? null, sourceId, data.note ?? null, data.linked_whim_id ?? null, ts, ts],
+    [name, target, currency, data.target_date ?? null, sourceId, data.note ?? null, data.linked_whim_id ?? null, ts, ts],
   );
   const goalId = rows[0].id;
   if (data.linked_whim_id != null) {
@@ -98,13 +100,14 @@ export async function updateGoal(db: SqlExecutor, id: number, patch: GoalPatch):
   if (patch.status && patch.status !== "active" && patch.status !== g.status) {
     throw new DomainError("use_close_or_delete");
   }
-  if (patch.target_amount !== undefined && !(patch.target_amount > 0)) throw new DomainError("invalid_amount");
+  const target = patch.target_amount !== undefined ? round2(patch.target_amount) : undefined;
+  if (target !== undefined && !(target > 0)) throw new DomainError("invalid_amount");
   if (patch.target_date != null) validateDate(patch.target_date);
   const sets: string[] = [];
   const params: unknown[] = [];
   const set = (c: string, v: unknown) => (sets.push(`${c} = ?`), params.push(v));
-  if (patch.name !== undefined) set("name", patch.name);
-  if (patch.target_amount !== undefined) set("target_amount", patch.target_amount);
+  if (patch.name !== undefined) set("name", validateName(patch.name));
+  if (target !== undefined) set("target_amount", target);
   if (patch.target_date !== undefined) set("target_date", patch.target_date);
   if (patch.note !== undefined) set("note", patch.note);
   if (patch.status !== undefined) set("status", patch.status);
@@ -123,7 +126,9 @@ export async function allocate(db: SqlExecutor, goalId: number, input: AllocateI
   const g = await getGoal(db, goalId);
   if (!g) throw new DomainError("not_found");
   if (g.status !== "active") throw new DomainError("goal_not_active");
-  if (!(input.amount > 0)) throw new DomainError("invalid_amount");
+  // Rounded once here so the allocation row and the transfer legs agree to the cent.
+  const amount = round2(input.amount);
+  if (!(amount > 0)) throw new DomainError("invalid_amount");
   if (input.fromSourceId === g.source_id) throw new DomainError("alloc_from_own_source");
   const from = await getSource(db, input.fromSourceId);
   if (!from) throw new DomainError("not_found");
@@ -140,14 +145,14 @@ export async function allocate(db: SqlExecutor, goalId: number, input: AllocateI
   const { inId } = await createTransferPair(db, {
     fromSourceId: input.fromSourceId,
     toSourceId: g.source_id,
-    amount: input.amount,
+    amount,
     date,
     note: g.name,
     outNote: `→ ${g.name}`,
   });
   await db.execute(
     `INSERT INTO goal_allocations (goal_id,movement_id,amount,date,created_at) VALUES (?,?,?,?,?)`,
-    [goalId, inId, input.amount, date, now()],
+    [goalId, inId, amount, date, now()],
   );
 }
 
