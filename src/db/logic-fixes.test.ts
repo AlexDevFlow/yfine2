@@ -365,3 +365,57 @@ describe("whims preferred source and goal allocations from funds", () => {
     expect(await sources.getBalance(db, fund.id)).toBe(300);
   });
 });
+
+describe("budget alerts with no warning threshold", () => {
+  it("still fires the overspend alert when alert_threshold_pct is 0", async () => {
+    const { db } = await makeMemDb();
+    const eur = await sources.createSource(db, { name: "A", currency: "EUR", starting_balance: 1000 });
+    const food = await tags.createTag(db, { name: "Food" });
+    const today = "2026-05-15";
+    await budgets.createBudget(db, { tag_id: food, amount: 100, currency: "EUR", period: "monthly", alert_threshold_pct: 0, start_date: "2026-05-01" });
+    await movements.createMovement(db, { source_id: eur.id, amount: 90, direction: "out", date: today, tagIds: [food] });
+    expect(await budgets.checkBudgetAlerts(db, today)).toBe(0); // 90% but no warning band
+    await movements.createMovement(db, { source_id: eur.id, amount: 20, direction: "out", date: today, tagIds: [food] });
+    expect(await budgets.checkBudgetAlerts(db, today)).toBe(1); // over → alert
+    expect(await budgets.checkBudgetAlerts(db, today)).toBe(0); // idempotent
+  });
+
+  it("does not alert on a budget that hasn't started yet", async () => {
+    const { db } = await makeMemDb();
+    const eur = await sources.createSource(db, { name: "A", currency: "EUR", starting_balance: 1000 });
+    const food = await tags.createTag(db, { name: "Food" });
+    await budgets.createBudget(db, { tag_id: food, amount: 10, currency: "EUR", period: "monthly", alert_threshold_pct: 50, start_date: "2026-06-01" });
+    await movements.createMovement(db, { source_id: eur.id, amount: 500, direction: "out", date: "2026-05-15", tagIds: [food] });
+    expect(await budgets.checkBudgetAlerts(db, "2026-05-15")).toBe(0);
+  });
+});
+
+describe("forecast places already-booked future movements on the timeline", () => {
+  it("starts from today's balance and applies a future-dated movement on its date", async () => {
+    const { db } = await makeMemDb();
+    const s = await sources.createSource(db, { name: "Checking", currency: "EUR", starting_balance: 100 });
+    await movements.createMovement(db, { source_id: s.id, amount: 80, direction: "out", date: "2026-06-20", note: "Rent (booked ahead)" });
+    const fc = await forecastCashflow(db, 30, "2026-06-02");
+    const eur = fc.find((f) => f.currency === "EUR")!;
+    expect(eur.start).toBe(100); // not 20: the rent hasn't left yet
+    expect(eur.end).toBe(20);
+    expect(eur.negativeFrom).toBeNull();
+    expect(eur.points.map((p) => p.date)).toEqual(["2026-06-02", "2026-06-20"]);
+    // A future movement beyond the horizon is simply outside the window.
+    await movements.createMovement(db, { source_id: s.id, amount: 500, direction: "out", date: "2026-12-01" });
+    const fc2 = await forecastCashflow(db, 30, "2026-06-02");
+    expect(fc2.find((f) => f.currency === "EUR")!.end).toBe(20);
+  });
+
+  it("same-currency transfer legs booked for a future date cancel out", async () => {
+    const { db } = await makeMemDb();
+    const a = await sources.createSource(db, { name: "A", currency: "EUR", starting_balance: 100 });
+    const b = await sources.createSource(db, { name: "B", currency: "EUR", starting_balance: 0 });
+    await movements.createTransfer(db, { fromSourceId: a.id, toSourceId: b.id, amount: 40, date: "2026-06-10" });
+    const fc = await forecastCashflow(db, 30, "2026-06-02");
+    const eur = fc.find((f) => f.currency === "EUR")!;
+    expect(eur.start).toBe(100);
+    expect(eur.end).toBe(100);
+    expect(eur.points).toHaveLength(1);
+  });
+});

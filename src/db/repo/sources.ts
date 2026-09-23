@@ -69,6 +69,20 @@ export async function getBalanceAsOf(db: SqlExecutor, id: number, dateISO: strin
   return round2(rows[0].bal);
 }
 
+/** Every source's cash balance as of `dateISO` (inclusive) — see getBalanceAsOf. */
+export async function getBalancesAsOfBatch(db: SqlExecutor, dateISO: string): Promise<Map<number, number>> {
+  const rows = await db.select<{ id: number; bal: number }>(
+    `SELECT s.id AS id, s.starting_balance + COALESCE((
+        SELECT SUM(CASE m.direction WHEN 'in' THEN m.amount ELSE -m.amount END)
+        FROM movements m WHERE m.source_id = s.id AND m.date <= ?), 0) AS bal
+     FROM sources s`,
+    [dateISO],
+  );
+  const map = new Map<number, number>();
+  for (const r of rows) map.set(r.id, round2(r.bal));
+  return map;
+}
+
 export async function getBalancesBatch(
   db: SqlExecutor,
 ): Promise<Map<number, number>> {

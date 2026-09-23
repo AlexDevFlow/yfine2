@@ -255,11 +255,13 @@ async function tagName(db: SqlExecutor, tagId: number): Promise<string> {
 
 /** Idempotent threshold/overspend alerts (§A12, B-1 fixed). Returns count fired. */
 export async function checkBudgetAlerts(db: SqlExecutor, today = todayISO()): Promise<number> {
-  const budgets = await db.select<BudgetRow>(`SELECT * FROM budgets WHERE active = 1 AND alert_threshold_pct > 0`);
+  // Every active budget: a threshold of 0 means "no early warning", not "never
+  // tell me I'm over" — the overspend alert below doesn't depend on it.
+  const budgets = await db.select<BudgetRow>(`SELECT * FROM budgets WHERE active = 1`);
   let fired = 0;
   for (const b of budgets) {
-    const [ps, pe] = periodBounds(b.period, today);
-    if (today < ps || today > pe) continue;
+    // A budget that hasn't started yet has nothing to alert on.
+    if (today < b.start_date) continue;
     const st = await budgetStatus(db, b, today, today);
     // B-1 fix (alert half): overspend fires even when available <= 0 (negative
     // rollover), mirroring isOver in budgetStatus. The threshold band still requires
@@ -267,7 +269,7 @@ export async function checkBudgetAlerts(db: SqlExecutor, today = todayISO()): Pr
     const isOver = st.actual > 0 && st.actual > st.available;
     const level = isOver
       ? 100
-      : st.available > 0 && st.spentPct >= b.alert_threshold_pct
+      : b.alert_threshold_pct > 0 && st.available > 0 && st.spentPct >= b.alert_threshold_pct
         ? b.alert_threshold_pct
         : 0;
     const lastLevel = b.last_alert_period === st.periodKey ? b.last_alert_level : 0;

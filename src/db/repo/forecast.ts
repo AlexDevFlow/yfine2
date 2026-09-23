@@ -8,7 +8,7 @@ import type { SqlExecutor } from "../types";
 import { round2 } from "@/domain/money";
 import { addDaysISO } from "@/lib/date";
 import { anchorDayOf, computeNextDueDate } from "./recurring";
-import { getBalancesBatch, listSources } from "./sources";
+import { getBalancesAsOfBatch, listSources } from "./sources";
 
 export interface ForecastPoint {
   date: string;
@@ -42,18 +42,38 @@ export async function forecastCashflow(
   today: string,
 ): Promise<CurrencyForecast[]> {
   const sources = await listSources(db, { includeHidden: true });
-  const balances = await getBalancesBatch(db);
+  // Opening balances as of TODAY: a movement the user already booked with a
+  // future date (next month's rent, a scheduled deposit) is not money that has
+  // moved yet. It belongs on the timeline at its date — below — not silently
+  // pre-applied to the starting figure, where it would double-dip with the
+  // recurring rule that produced it or hide WHEN the balance actually dips.
+  const balances = await getBalancesAsOfBatch(db, today);
   const startByCcy = new Map<string, number>();
   const sourceCcy = new Map<number, string>();
   for (const s of sources) {
     sourceCcy.set(s.id, s.currency);
-    startByCcy.set(s.currency, round2((startByCcy.get(s.currency) ?? 0) + (balances.get(s.id) ?? 0)));
+    startByCcy.set(s.currency, round2((startByCcy.get(s.currency) ?? 0) + (balances.get(s.id) ?? round2(s.starting_balance))));
   }
 
   const horizonEnd = addDaysISO(today, horizonDays);
   const items = await db.select<RecRow>(`SELECT id,name,amount,direction,frequency,next_due_date,start_date,end_date,source_id FROM recurring_items WHERE source_id IS NOT NULL`);
 
   const events: { date: string; currency: string; delta: number; label: string }[] = [];
+
+  // Already-booked future movements inside the window, netted per (date, currency).
+  // Same-currency transfer legs cancel here exactly as they do in a balance.
+  const scheduled = await db.select<{ date: string; currency: string; delta: number }>(
+    `SELECT m.date AS date, s.currency AS currency,
+            SUM(CASE WHEN m.direction = 'in' THEN m.amount ELSE -m.amount END) AS delta
+     FROM movements m JOIN sources s ON m.source_id = s.id
+     WHERE m.date > ? AND m.date <= ?
+     GROUP BY m.date, s.currency`,
+    [today, horizonEnd],
+  );
+  for (const r of scheduled) {
+    const delta = round2(r.delta);
+    if (delta !== 0) events.push({ date: r.date, currency: r.currency, delta, label: "scheduled" });
+  }
   for (const it of items) {
     const ccy = it.source_id != null ? sourceCcy.get(it.source_id) : undefined;
     if (!ccy) continue;
