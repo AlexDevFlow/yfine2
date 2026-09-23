@@ -21,6 +21,7 @@ import { clearPriceCache, fetchCryptoPrice, fetchStockPrice, setPriceTransport, 
 import { refreshRates } from "./repo/fx";
 import { resetAllData, type AttachmentFs } from "./backup";
 import { addAttachment } from "./repo/attachments";
+import { getSettings } from "./repo/settings";
 import { tryParseDate, parseCsv, isValidCalendarDate } from "./importers/csv";
 import { parseOfxDate } from "./importers/ofx";
 import { addMonthsISO } from "@/lib/date";
@@ -626,5 +627,158 @@ describe("tag colour tint", () => {
     expect(tags.tintOf("#abc")).toBe("#aabbcc22");
     expect(tags.tintOf("#112233")).toBe("#11223322");
     expect(tags.tintOf("#11223344")).toBe("#11223322");
+  });
+});
+
+describe("amounts are stored to the cent on every write path", () => {
+  it("rounds movement, transfer and split amounts", async () => {
+    const { db } = await makeMemDb();
+    const a = await sources.createSource(db, { name: "A", currency: "EUR", starting_balance: 100 });
+    const b = await sources.createSource(db, { name: "B", currency: "EUR", starting_balance: 0 });
+    const mid = await movements.createMovement(db, { source_id: a.id, amount: 10 / 3, direction: "out", date: "2026-05-01" });
+    expect((await movements.getMovement(db, mid))!.amount).toBe(3.33);
+    await movements.updateMovement(db, mid, { amount: 19.999 });
+    expect((await movements.getMovement(db, mid))!.amount).toBe(20);
+    const pair = await movements.createTransfer(db, { fromSourceId: a.id, toSourceId: b.id, amount: 1.005, date: "2026-05-01" });
+    expect((await movements.getMovement(db, pair.outId))!.amount).toBe(1.01);
+    expect((await inLeg(db, pair.outId)).amount).toBe(1.01);
+    expect(await sources.getBalance(db, b.id)).toBe(1.01);
+  });
+});
+
+describe("transfer edits never move a leg that sits on a savings fund", () => {
+  it("rejects a note-only edit of a goal-close refund pair", async () => {
+    const { db } = await makeMemDb();
+    const acct = await sources.createSource(db, { name: "A", currency: "EUR", starting_balance: 1000 });
+    const dest = await sources.createSource(db, { name: "B", currency: "EUR", starting_balance: 0 });
+    const gid = await goals.createGoal(db, { name: "Trip", target_amount: 500, currency: "EUR" });
+    await goals.allocate(db, gid, { fromSourceId: acct.id, amount: 100, date: "2026-05-01" });
+    await goals.closeGoal(db, gid, dest.id, "2026-05-02");
+    const refund = (await db.select<{ id: number }>(`SELECT id FROM movements WHERE note LIKE '↩%' AND direction = 'out'`))[0];
+    await expect(movements.updateTransfer(db, refund.id, { note: "renamed" })).rejects.toMatchObject({ code: "fund_transfer_not_allowed" });
+    await expect(movements.updateTransfer(db, refund.id, { fromSourceId: acct.id })).rejects.toMatchObject({ code: "fund_transfer_not_allowed" });
+  });
+});
+
+describe("breakdown tag shares add up to the movement", () => {
+  it("gives the rounding remainder to the first tag", async () => {
+    const { db } = await makeMemDb();
+    const a = await sources.createSource(db, { name: "A", currency: "EUR", starting_balance: 100 });
+    const t1 = await tags.createTag(db, { name: "x" });
+    const t2 = await tags.createTag(db, { name: "y" });
+    const t3 = await tags.createTag(db, { name: "z" });
+    await movements.createMovement(db, { source_id: a.id, amount: 10, direction: "out", date: "2026-05-01", tagIds: [t1, t2, t3] });
+    const { spendingBreakdown } = await import("./repo/breakdown");
+    const bd = await spendingBreakdown(db, { direction: "out" });
+    const sum = bd.byTag.reduce((s, x) => s + x.total, 0);
+    expect(Math.round(sum * 100) / 100).toBe(10);
+    expect(bd.byTag.map((x) => x.total).sort()).toEqual([3.33, 3.33, 3.34]);
+  });
+});
+
+describe("CSV amounts with both separators", () => {
+  it("treats the rightmost separator as the decimal whatever the preset says", async () => {
+    const { parseAmount } = await import("./importers/csv");
+    expect(parseAmount("-1.234,56", ".")).toBe(-1234.56);
+    expect(parseAmount("1,234.56", ".")).toBe(1234.56);
+    expect(parseAmount("1,234.56", ",")).toBe(1234.56);
+  });
+});
+
+describe("settings that name rows by id forget deleted or wiped rows", () => {
+  it("deleteSource drops the id from the net-worth exclusions and the last-used slot", async () => {
+    const { db } = await makeMemDb();
+    const a = await sources.createSource(db, { name: "A", currency: "EUR" });
+    const b = await sources.createSource(db, { name: "B", currency: "EUR" });
+    await getSettings(db); // the singleton row is created lazily
+    await db.execute(`UPDATE settings SET net_worth_excluded_json = ?, last_source_id = ?`, [JSON.stringify([a.id, b.id]), a.id]);
+    await sources.deleteSource(db, a.id, { kind: "delete_all" });
+    const s = (await db.select<{ net_worth_excluded_json: string; last_source_id: number | null }>(`SELECT net_worth_excluded_json, last_source_id FROM settings`))[0];
+    expect(JSON.parse(s.net_worth_excluded_json)).toEqual([b.id]);
+    expect(s.last_source_id).toBeNull();
+  });
+
+  it("resetAllData clears id-bearing preferences so re-used ids inherit nothing", async () => {
+    const { db } = await makeMemDb();
+    const a = await sources.createSource(db, { name: "A", currency: "EUR" });
+    await getSettings(db);
+    await db.execute(`UPDATE settings SET net_worth_excluded_json = ?, last_source_id = ?, movement_templates_json = '[{"name":"x"}]', saved_views_json = '[{"name":"v","params":{}}]', theme = 'dark'`, [JSON.stringify([a.id]), a.id]);
+    await resetAllData(db, { async read() { throw new Error("no"); }, async write() {}, async list() { return []; }, async remove() {} });
+    const s = (await db.select<{ net_worth_excluded_json: string; last_source_id: number | null; movement_templates_json: string; saved_views_json: string; theme: string }>(`SELECT * FROM settings`))[0];
+    expect(s.net_worth_excluded_json).toBe("[]");
+    expect(s.last_source_id).toBeNull();
+    expect(s.movement_templates_json).toBe("[]");
+    expect(s.saved_views_json).toBe("[]");
+    expect(s.theme).toBe("dark"); // other preferences still survive
+  });
+});
+
+describe("holdings and stock quotes", () => {
+  it("a holding's asset class can be corrected after creation", async () => {
+    const { db } = await makeMemDb();
+    const s = await sources.createSource(db, { name: "Broker", currency: "EUR" });
+    const pid = await portfolios.createPortfolio(db, { name: "P", base_currency: "EUR", source_id: s.id, kind: "mixed" });
+    const hid = await portfolios.createHolding(db, { portfolio_id: pid, asset_class: "stock", symbol: "BTC", currency: "EUR" });
+    await portfolios.updateHolding(db, hid, { asset_class: "crypto" });
+    expect((await portfolios.getHolding(db, hid))!.asset_class).toBe("crypto");
+  });
+
+  it("a London quote in pence is stored in pounds, and the holding follows the listing currency", async () => {
+    const { db } = await makeMemDb();
+    const s = await sources.createSource(db, { name: "Broker", currency: "EUR" });
+    const pid = await portfolios.createPortfolio(db, { name: "P", base_currency: "EUR", source_id: s.id });
+    const vod = await portfolios.createHolding(db, { portfolio_id: pid, asset_class: "stock", symbol: "VOD.L", quantity: 10, avg_cost: 0.7, currency: "GBP" });
+    const aapl = await portfolios.createHolding(db, { portfolio_id: pid, asset_class: "stock", symbol: "AAPL", quantity: 1, avg_cost: 100, currency: "EUR" });
+    clearPriceCache();
+    setPriceTransport(async (url) => {
+      const body = url.includes("VOD.L")
+        ? { chart: { result: [{ meta: { regularMarketPrice: 7250, currency: "GBp" } }] } }
+        : { chart: { result: [{ meta: { regularMarketPrice: 150, currency: "USD" } }] } };
+      return { ok: true, status: 200, json: async () => body } as Response;
+    });
+    try {
+      const { refreshHolding } = await import("./repo/prices");
+      expect(await refreshHolding(db, vod)).toBe(true);
+      expect(await refreshHolding(db, aapl)).toBe(true);
+    } finally {
+      setPriceTransport(null);
+      clearPriceCache();
+    }
+    const v = (await portfolios.getHolding(db, vod))!;
+    expect(v.last_price).toBe(72.5);
+    expect(v.currency).toBe("GBP");
+    const a = (await portfolios.getHolding(db, aapl))!;
+    expect(a.last_price).toBe(150);
+    expect(a.currency).toBe("USD"); // a USD price never sits under a EUR label
+  });
+});
+
+describe("whim price edits follow through to the linked goal", () => {
+  it("updates the active goal's target amount", async () => {
+    const { db } = await makeMemDb();
+    const wid = await whims.createWhim(db, { name: "Camera", amount: 500, currency: "EUR" });
+    const gid = await whims.startSavingForWhim(db, wid);
+    await whims.updateWhim(db, wid, { amount: 800 });
+    expect((await goals.getGoal(db, gid))!.target_amount).toBe(800);
+  });
+});
+
+describe("income budgets are targets, not ceilings", () => {
+  it("never reads as over, never fires an exceeded alert, and a direction change resets the alert band", async () => {
+    const { db } = await makeMemDb();
+    const acct = await sources.createSource(db, { name: "A", currency: "EUR", starting_balance: 0 });
+    const tid = await tags.createTag(db, { name: "Salary" });
+    const bid = await budgets.createBudget(db, { tag_id: tid, amount: 1000, currency: "EUR", direction: "in", period: "monthly", start_date: "2026-05-01" });
+    await movements.createMovement(db, { source_id: acct.id, amount: 2000, direction: "in", date: "2026-05-10", tagIds: [tid] });
+    const [st] = await budgets.listBudgetStatuses(db, 0, "2026-05-15");
+    expect(st.actual).toBe(2000);
+    expect(st.status).toBe("ok");
+    expect(await budgets.checkBudgetAlerts(db, "2026-05-15")).toBe(0);
+
+    await db.execute(`UPDATE budgets SET last_alert_period = '2026-05', last_alert_level = 100 WHERE id = ?`, [bid]);
+    await budgets.updateBudget(db, bid, { direction: "out" });
+    const row = (await budgets.getBudget(db, bid))!;
+    expect(row.last_alert_period).toBeNull();
+    expect(row.last_alert_level).toBe(0);
   });
 });

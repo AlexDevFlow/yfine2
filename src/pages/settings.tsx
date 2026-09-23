@@ -696,8 +696,11 @@ function ImportCard() {
       format?: ImportFormat | "";
       presetId?: string;
       sourceId?: number | null;
+      /** True when the target is the not-yet-created source (same stale-closure reason as the others). */
+      creatingNew?: boolean;
     } = {},
   ) => {
+    const isNew = overrides.creatingNew ?? creatingNew;
     setBusy(true);
     setResult(undefined);
     try {
@@ -706,7 +709,7 @@ function ImportCard() {
       // — reading state here would preview against the previously selected value.
       const fmt = "format" in overrides ? overrides.format || undefined : formatOverride || undefined;
       const preset = "presetId" in overrides ? overrides.presetId || undefined : presetOverride || undefined;
-      const src = "sourceId" in overrides ? overrides.sourceId : sourceId && !creatingNew ? Number(sourceId) : null;
+      const src = "sourceId" in overrides ? overrides.sourceId : sourceId && !isNew ? Number(sourceId) : null;
       const p = await previewImport(await getDb(), f, {
         format: fmt,
         presetId: preset,
@@ -716,7 +719,7 @@ function ImportCard() {
       setPreview(p);
       setInclude(new Set(p.rows.filter((r) => !r.isDuplicate).map((r) => r.index)));
       if (p.needsMapping) setShowMapping(true);
-      if (creatingNew && p.detectedCurrency && !newCurrency) setNewCurrency(p.detectedCurrency);
+      if (isNew && p.detectedCurrency) setNewCurrency((cur) => cur || p.detectedCurrency!);
     } catch (e) {
       setResult({ ok: false, text: errText(e) });
     } finally {
@@ -818,7 +821,7 @@ function ImportCard() {
                 flags are computed against the chosen account, and a brand-new
                 one has nothing to be a duplicate of — keeping the previous
                 account's flags would silently skip rows from the import. */}
-            <Select id="imp-src" value={sourceId} onChange={(e) => { const v = e.target.value; setSourceId(v); if (file) void runPreview(file, { sourceId: v && v !== NEW_SOURCE ? Number(v) : null, ...(columnMap ? { map: columnMap } : {}) }); }} className="min-w-[200px]">
+            <Select id="imp-src" value={sourceId} onChange={(e) => { const v = e.target.value; setSourceId(v); if (file) void runPreview(file, { sourceId: v && v !== NEW_SOURCE ? Number(v) : null, creatingNew: v === NEW_SOURCE, ...(columnMap ? { map: columnMap } : {}) }); }} className="min-w-[200px]">
               <option value="">{t("select_account", { defaultValue: "Select an account…" })}</option>
               {(sources ?? []).map((s) => <option key={s.id} value={s.id}>{s.name} · {s.currency}</option>)}
               <option value={NEW_SOURCE}>+ {t("import_create_new_source", { defaultValue: "Create new source" })}</option>

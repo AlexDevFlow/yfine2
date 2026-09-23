@@ -194,6 +194,7 @@ export async function createHolding(db: SqlExecutor, data: NewHolding): Promise<
 }
 
 export interface HoldingPatch {
+  asset_class?: "crypto" | "stock";
   symbol?: string;
   display_name?: string | null;
   quantity?: number;
@@ -219,6 +220,10 @@ export async function updateHolding(db: SqlExecutor, id: number, patch: HoldingP
   const sets: string[] = [];
   const params: unknown[] = [];
   const set = (c: string, v: unknown) => (sets.push(`${c} = ?`), params.push(v));
+  if (patch.asset_class !== undefined) {
+    if (patch.asset_class !== "crypto" && patch.asset_class !== "stock") throw new DomainError("invalid_amount");
+    set("asset_class", patch.asset_class);
+  }
   if (patch.symbol !== undefined) set("symbol", patch.symbol.trim().toUpperCase());
   if (patch.display_name !== undefined) set("display_name", patch.display_name);
   if (patch.quantity !== undefined) set("quantity", patch.quantity);

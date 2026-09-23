@@ -185,8 +185,9 @@ export function MovementForm({
 // ---- transfer -----------------------------------------------------------
 
 export interface TransferFormValues {
-  fromSourceId: number;
-  toSourceId: number;
+  /** null = the leg has no account (a migrated saving) and the edit leaves it that way. */
+  fromSourceId: number | null;
+  toSourceId: number | null;
   amount: number;
   toAmount: number | null;
   date: string;
@@ -213,11 +214,18 @@ export function TransferForm({
 }) {
   const { t } = useTranslation();
   const real = sources;
+  // A leg with NO account (the savings migration's "external" out-leg) stays
+  // external while editing: substituting the first listed account would move
+  // money into it on a note-only save. "" is the external option's value.
+  const fromExternal = initial != null && initial.source_id == null;
+  const toExternal = initial != null && initial.partner_source_id == null;
   const [fromId, setFromId] = useState<string>(
-    initial?.source_id != null ? String(initial.source_id) : String(real[0]?.id ?? ""),
+    initial ? (initial.source_id != null ? String(initial.source_id) : "") : String(real[0]?.id ?? ""),
   );
   const [toId, setToId] = useState<string>(
-    initial?.partner_source_id != null ? String(initial.partner_source_id) : String(real[1]?.id ?? real[0]?.id ?? ""),
+    initial
+      ? (initial.partner_source_id != null ? String(initial.partner_source_id) : "")
+      : String(real[1]?.id ?? real[0]?.id ?? ""),
   );
   const [amount, setAmount] = useState(initial ? String(initial.amount) : "");
   const [toAmount, setToAmount] = useState(initial?.partner_amount != null ? String(initial.partner_amount) : "");
@@ -236,24 +244,26 @@ export function TransferForm({
   // from the actual option objects before enabling/submitting the form.
   useEffect(() => {
     if (real.length === 0) return;
-    const validFrom = real.some((s) => String(s.id) === fromId);
+    const validFrom = real.some((s) => String(s.id) === fromId) || (fromExternal && fromId === "");
     const nextFrom = validFrom ? fromId : String(real[0].id);
-    const validTo = real.some((s) => String(s.id) === toId);
+    const validTo = real.some((s) => String(s.id) === toId) || (toExternal && toId === "");
     let nextTo = validTo ? toId : String(real.find((s) => String(s.id) !== nextFrom)?.id ?? "");
-    if (nextTo === nextFrom) {
+    if (nextTo !== "" && nextTo === nextFrom) {
       nextTo = String(real.find((s) => String(s.id) !== nextFrom)?.id ?? "");
     }
     if (nextFrom !== fromId) setFromId(nextFrom);
     if (nextTo !== toId) setToId(nextTo);
-  }, [real, fromId, toId]);
+  }, [real, fromId, toId, fromExternal, toExternal]);
 
   const fromSource = useMemo(() => real.find((s) => String(s.id) === fromId), [real, fromId]);
   const toSource = useMemo(() => real.find((s) => String(s.id) === toId), [real, toId]);
+  const fromOk = !!fromSource || (fromExternal && fromId === "");
+  const toOk = !!toSource || (toExternal && toId === "");
   const fromCcy = fromSource?.currency;
   const toCcy = toSource?.currency;
   const crossCurrency = !!fromCcy && !!toCcy && fromCcy !== toCcy;
   const sameSource = fromId !== "" && fromId === toId;
-  const sourceSelectionInvalid = !fromSource || !toSource;
+  const sourceSelectionInvalid = !fromOk || !toOk;
 
   const changeFrom = (next: string) => {
     setFromId(next);
@@ -310,10 +320,10 @@ export function TransferForm({
     e.preventDefault();
     // The button is disabled in this state; keep the submit boundary defensive
     // against synthetic submission / a source disappearing during the modal.
-    if (!fromSource || !toSource) return;
+    if (!fromOk || !toOk) return;
     onSubmit({
-      fromSourceId: fromSource.id,
-      toSourceId: toSource.id,
+      fromSourceId: fromSource?.id ?? null,
+      toSourceId: toSource?.id ?? null,
       amount: parseMoneyInput(amount),
       // Same currency uses null so the repository mirrors the amount 1:1.
       toAmount: crossCurrency && toAmount.trim() !== "" ? parseMoneyInput(toAmount) : null,
@@ -327,16 +337,20 @@ export function TransferForm({
     <form onSubmit={submit} className="space-y-4">
       <div className="grid grid-cols-2 gap-3">
         <Field label={t("from", { defaultValue: "From" })} htmlFor="tr-from">
-          <Select id="tr-from" value={fromId} onChange={(e) => changeFrom(e.target.value)} required>
-            <option value="" disabled>{t("select_source", { defaultValue: "Select source" })}</option>
+          <Select id="tr-from" value={fromId} onChange={(e) => changeFrom(e.target.value)} required={!fromExternal}>
+            {fromExternal
+              ? <option value="">{t("external", { defaultValue: "External" })}</option>
+              : <option value="" disabled>{t("select_source", { defaultValue: "Select source" })}</option>}
             {real.map((s) => (
               <option key={s.id} value={s.id}>{s.name} · {s.currency}</option>
             ))}
           </Select>
         </Field>
         <Field label={t("to", { defaultValue: "To" })} htmlFor="tr-to">
-          <Select id="tr-to" value={toId} onChange={(e) => changeTo(e.target.value)} required>
-            <option value="" disabled>{t("select_source", { defaultValue: "Select source" })}</option>
+          <Select id="tr-to" value={toId} onChange={(e) => changeTo(e.target.value)} required={!toExternal}>
+            {toExternal
+              ? <option value="">{t("external", { defaultValue: "External" })}</option>
+              : <option value="" disabled>{t("select_source", { defaultValue: "Select source" })}</option>}
             {real.map((s) => (
               <option key={s.id} value={s.id}>{s.name} · {s.currency}</option>
             ))}

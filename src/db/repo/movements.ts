@@ -8,6 +8,7 @@
 import type { SqlExecutor } from "../types";
 import type { MovementRow } from "../schema-types";
 import { DomainError } from "../errors";
+import { round2 } from "@/domain/money";
 import { validateDate } from "@/domain/validators";
 import { getSource } from "./sources";
 import { createTransferPair, deleteMovementCascade, type TransferPair } from "./transfers";
@@ -48,7 +49,11 @@ export interface NewMovement {
 }
 
 export async function createMovement(db: SqlExecutor, data: NewMovement): Promise<number> {
-  if (!(data.amount > 0)) throw new DomainError("invalid_amount");
+  // Money is stored to the cent: an expression like 10/3 in the amount field
+  // must not leave 3.333333 in the ledger (three of them list as 3.33 each but
+  // roll up to 10.00, and balances carry fractions of a cent forever).
+  const amount = round2(data.amount);
+  if (!(amount > 0)) throw new DomainError("invalid_amount");
   const date = validateDate(data.date);
   if (data.source_id != null && !(await getSource(db, data.source_id)))
     throw new DomainError("not_found");
@@ -58,7 +63,7 @@ export async function createMovement(db: SqlExecutor, data: NewMovement): Promis
     `INSERT INTO movements
        (source_id,amount,direction,date,note,transfer_pair_id,exclude_from_stats,is_savings_contribution,created_at,updated_at)
      VALUES (?,?,?,?,?,NULL,?,0,?,?) RETURNING id`,
-    [data.source_id ?? null, data.amount, data.direction, date, note, data.exclude_from_stats ? 1 : 0, ts, ts],
+    [data.source_id ?? null, amount, data.direction, date, note, data.exclude_from_stats ? 1 : 0, ts, ts],
   );
   if (data.tagIds) await setTags(db, rows[0].id, data.tagIds);
   return rows[0].id;
@@ -87,8 +92,9 @@ export async function updateMovement(db: SqlExecutor, id: number, patch: Movemen
     params.push(v);
   };
   if (patch.amount !== undefined) {
-    if (!(patch.amount > 0)) throw new DomainError("invalid_amount");
-    set("amount", patch.amount);
+    const amount = round2(patch.amount);
+    if (!(amount > 0)) throw new DomainError("invalid_amount");
+    set("amount", amount);
   }
   if (patch.direction !== undefined) set("direction", patch.direction);
   if (patch.date !== undefined) set("date", validateDate(patch.date));
@@ -131,15 +137,17 @@ export interface NewTransfer {
 
 export async function createTransfer(db: SqlExecutor, t: NewTransfer): Promise<TransferPair> {
   if (t.fromSourceId === t.toSourceId) throw new DomainError("same_source");
-  if (!(t.amount > 0)) throw new DomainError("invalid_amount");
-  if (t.toAmount != null && !(t.toAmount > 0)) throw new DomainError("invalid_amount");
+  const amount = round2(t.amount);
+  const toAmount = t.toAmount != null ? round2(t.toAmount) : null;
+  if (!(amount > 0)) throw new DomainError("invalid_amount");
+  if (toAmount != null && !(toAmount > 0)) throw new DomainError("invalid_amount");
   validateDate(t.date);
   const from = await getSource(db, t.fromSourceId);
   const to = await getSource(db, t.toSourceId);
   if (!from || !to) throw new DomainError("not_found");
   // Same-currency legs must match — a differing toAmount would mint money
   // (mirrors the updateTransfer check; the UI only sends toAmount cross-ccy).
-  if (from.currency === to.currency && t.toAmount != null && t.toAmount !== t.amount)
+  if (from.currency === to.currency && toAmount != null && toAmount !== amount)
     throw new DomainError("invalid_amount");
   // Funds have dedicated save/withdraw flows that maintain their invariants
   // (savings.ts / goals.ts call createTransferPair directly); a plain transfer
@@ -149,11 +157,11 @@ export async function createTransfer(db: SqlExecutor, t: NewTransfer): Promise<T
   return createTransferPair(db, {
     fromSourceId: t.fromSourceId,
     toSourceId: t.toSourceId,
-    amount: t.amount,
+    amount,
     date: t.date,
     note: cleanNote(t.note),
     tagIds: t.tagIds ?? [],
-    toAmount: t.toAmount ?? null,
+    toAmount,
   });
 }
 
@@ -201,8 +209,15 @@ export async function updateTransfer(db: SqlExecutor, outLegId: number, patch: T
   // No leg of a plain transfer may sit on (or be re-pointed onto) a fund —
   // fund balances must only move through the savings/goals flows. Savings and
   // allocation pairs never reach this point (guards above); goal-close refund
-  // pairs DO have a fund leg and are therefore locked from raw edits too.
-  if (fromSrc?.is_savings_fund === 1 || toSrc?.is_savings_fund === 1)
+  // pairs DO have a fund leg and are therefore locked from raw edits too. The
+  // CURRENT legs are checked as well as the new ones: re-pointing a fund leg
+  // elsewhere would move the refund out of the fund just as silently.
+  const curFrom = out.source_id != null ? await getSource(db, out.source_id) : null;
+  const curTo = inLeg.source_id != null ? await getSource(db, inLeg.source_id) : null;
+  if (
+    fromSrc?.is_savings_fund === 1 || toSrc?.is_savings_fund === 1 ||
+    curFrom?.is_savings_fund === 1 || curTo?.is_savings_fund === 1
+  )
     throw new DomainError("fund_transfer_not_allowed");
   const sameCcy = fromSrc != null && toSrc != null && fromSrc.currency === toSrc.currency;
 
@@ -225,16 +240,18 @@ export async function updateTransfer(db: SqlExecutor, outLegId: number, patch: T
     oset("note", n);
     iset("note", n);
   }
-  if (patch.amount !== undefined) {
-    if (!(patch.amount > 0)) throw new DomainError("invalid_amount");
-    oset("amount", patch.amount);
+  const patchAmount = patch.amount !== undefined ? round2(patch.amount) : undefined;
+  if (patchAmount !== undefined) {
+    if (!(patchAmount > 0)) throw new DomainError("invalid_amount");
+    oset("amount", patchAmount);
   }
-  const newAmount = patch.amount ?? out.amount;
+  const newAmount = patchAmount ?? out.amount;
   if (patch.toAmount != null) {
-    if (!(patch.toAmount > 0)) throw new DomainError("invalid_amount");
+    const toAmount = round2(patch.toAmount);
+    if (!(toAmount > 0)) throw new DomainError("invalid_amount");
     // Same-currency legs must match — a differing toAmount would mint money.
-    if (sameCcy && patch.toAmount !== newAmount) throw new DomainError("invalid_amount");
-    iset("amount", patch.toAmount);
+    if (sameCcy && toAmount !== newAmount) throw new DomainError("invalid_amount");
+    iset("amount", toAmount);
   } else if (patch.toAmount === null) {
     // Explicit null = "no converted amount": mirror 1:1, matching create
     // (transfers.ts falls back to the OUT amount when toAmount is absent).

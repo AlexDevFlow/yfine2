@@ -104,10 +104,12 @@ export async function budgetStatus(
   const spentPct = available > 0 ? round1((actual / available) * 100) : actual > 0 ? 100 : 0;
 
   // B-1 fix: "over" whenever real spending exceeds available, including available <= 0.
-  const isOver = actual > 0 && actual > available;
+  // An INCOME budget is a target, not a ceiling: passing it is the goal, so it
+  // never reads as "over" and never enters the warning band.
+  const isOver = b.direction === "out" && actual > 0 && actual > available;
   const status: BudgetStatus["status"] = isOver
     ? "over"
-    : b.alert_threshold_pct > 0 && spentPct >= b.alert_threshold_pct
+    : b.direction === "out" && b.alert_threshold_pct > 0 && spentPct >= b.alert_threshold_pct
       ? "warning"
       : "ok";
 
@@ -157,7 +159,8 @@ export interface NewBudget {
 }
 
 export async function createBudget(db: SqlExecutor, data: NewBudget): Promise<number> {
-  if (!(data.amount > 0)) throw new DomainError("invalid_amount");
+  const amount = round2(data.amount);
+  if (!(amount > 0)) throw new DomainError("invalid_amount");
   await ensureTag(db, data.tag_id);
   const currency = validateCurrency(data.currency);
   const period = data.period ?? "monthly";
@@ -168,7 +171,7 @@ export async function createBudget(db: SqlExecutor, data: NewBudget): Promise<nu
   const rows = await db.select<{ id: number }>(
     `INSERT INTO budgets (tag_id,amount,currency,period,direction,rollover,alert_threshold_pct,active,start_date,last_alert_period,last_alert_level,created_at,updated_at)
      VALUES (?,?,?,?,?,?,?,?,?,NULL,0,?,?) RETURNING id`,
-    [data.tag_id, data.amount, currency, period, data.direction ?? "out", data.rollover ? 1 : 0, data.alert_threshold_pct ?? 80, active, startDate, ts, ts],
+    [data.tag_id, amount, currency, period, data.direction ?? "out", data.rollover ? 1 : 0, data.alert_threshold_pct ?? 80, active, startDate, ts, ts],
   );
   return rows[0].id;
 }
@@ -184,6 +187,7 @@ export async function updateBudget(db: SqlExecutor, id: number, patch: BudgetPat
   const cur = await getBudget(db, id);
   if (!cur) throw new DomainError("not_found");
   if (patch.tag_id !== undefined) await ensureTag(db, patch.tag_id);
+  if (patch.amount !== undefined) patch = { ...patch, amount: round2(patch.amount) };
   if (patch.amount !== undefined && !(patch.amount > 0)) throw new DomainError("invalid_amount");
 
   const nextTag = patch.tag_id ?? cur.tag_id;
@@ -197,6 +201,7 @@ export async function updateBudget(db: SqlExecutor, id: number, patch: BudgetPat
     (patch.period !== undefined && patch.period !== cur.period) ||
     (patch.tag_id !== undefined && patch.tag_id !== cur.tag_id) ||
     (patch.currency !== undefined && nextCcy !== cur.currency) ||
+    (patch.direction !== undefined && patch.direction !== cur.direction) ||
     (patch.rollover !== undefined && (patch.rollover ? 1 : 0) !== cur.rollover) ||
     (patch.active !== undefined && nextActive !== cur.active);
 
@@ -260,8 +265,9 @@ export async function checkBudgetAlerts(db: SqlExecutor, today = todayISO()): Pr
   const budgets = await db.select<BudgetRow>(`SELECT * FROM budgets WHERE active = 1`);
   let fired = 0;
   for (const b of budgets) {
-    // A budget that hasn't started yet has nothing to alert on.
-    if (today < b.start_date) continue;
+    // A budget that hasn't started yet has nothing to alert on; an income
+    // target has no "exceeded" to warn about (see budgetStatus).
+    if (today < b.start_date || b.direction !== "out") continue;
     const st = await budgetStatus(db, b, today, today);
     // B-1 fix (alert half): overspend fires even when available <= 0 (negative
     // rollover), mirroring isOver in budgetStatus. The threshold band still requires

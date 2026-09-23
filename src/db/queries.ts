@@ -72,7 +72,9 @@ function invalidateMoney(qc: ReturnType<typeof useQueryClient>) {
 // only need the views *derived* from movements — goal progress, allocation
 // lists and tag usage counts included — sparing a refetch of the always-mounted
 // notification badge on every single edit.
-const MOVEMENT_KEYS = ["movements", "sources", "dashboard", "budgets", "goals", "goalAllocations", "tags", "forecast", "consolidated", "savings", "history", "movementCounts"];
+// `whims` is here because a goal-allocation movement deleted from the list
+// changes the linked whim's "saved so far" bar.
+const MOVEMENT_KEYS = ["movements", "sources", "dashboard", "budgets", "goals", "goalAllocations", "whims", "tags", "forecast", "consolidated", "savings", "history", "movementCounts"];
 function invalidateMovementMoney(qc: ReturnType<typeof useQueryClient>) {
   for (const k of MOVEMENT_KEYS) void qc.invalidateQueries({ queryKey: [k] });
 }
@@ -784,8 +786,10 @@ function usePortfolioMutation<TArgs, TResult>(fn: (db: import("./types").SqlExec
       const db = await getDb();
       return withTxAndCleanup(db, (tx) => fn(tx, a));
     },
+    // A holding/portfolio edit moves money the Sources page counts
+    // (portfolio_value / total_value) and re-shapes the value-history charts.
     onSuccess: () => {
-      for (const k of ["portfolios", "dashboard", "consolidated"]) void qc.invalidateQueries({ queryKey: [k] });
+      for (const k of ["portfolios", "dashboard", "consolidated", "sources", "history"]) void qc.invalidateQueries({ queryKey: [k] });
     },
   });
 }
@@ -814,7 +818,7 @@ export function useCreateHolding() {
       return id;
     },
     onSuccess: () => {
-      for (const k of ["portfolios", "dashboard", "consolidated", "sources"]) void qc.invalidateQueries({ queryKey: [k] });
+      for (const k of ["portfolios", "dashboard", "consolidated", "sources", "history"]) void qc.invalidateQueries({ queryKey: [k] });
     },
   });
 }

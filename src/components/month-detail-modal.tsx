@@ -7,7 +7,7 @@ import { BreakdownPanel } from "@/components/breakdown-panel";
 import { useMonthlyMovements, useToggleExclude } from "@/db/queries";
 import { round2 } from "@/domain/money";
 import { cn } from "@/lib/cn";
-import { dayLabel, monthStart, todayISO } from "@/lib/date";
+import { dayLabel, monthEnd, monthStart, todayISO } from "@/lib/date";
 import { formatMoney } from "@/lib/format";
 import type { MovementFilters } from "@/db/repo/movements";
 
@@ -47,25 +47,36 @@ export function MonthDetailModal({
   const toggleExclude = useToggleExclude();
   const [hiddenSources, setHiddenSources] = useState<Set<string>>(new Set());
   const [tab, setTab] = useState<"breakdown" | "list">("breakdown");
-  // Reopening on the other total is a fresh question — start from the charts again.
-  useEffect(() => setTab("breakdown"), [direction]);
+  // Reopening on the other total is a fresh question — start from the charts
+  // again, with every account visible (the modal stays mounted between opens).
+  useEffect(() => {
+    setTab("breakdown");
+    setHiddenSources(new Set());
+  }, [direction]);
 
   const sign = direction === "in" ? "+" : "−";
   const colorClass = direction === "in" ? "text-positive" : "text-negative";
 
-  // Per-source non-excluded subtotals for chips (key by display name).
+  // Per-source non-excluded subtotals for chips. Keyed by name AND currency:
+  // two accounts both called "Cash" (EUR and USD) must not merge into one chip
+  // whose subtotal adds euros to dollars.
+  const chipKey = (m: { source_name: string | null; source_currency: string | null }) =>
+    `${m.source_name ?? t("external", { defaultValue: "External" })}\u0000${m.source_currency ?? ""}`;
   const chips = useMemo(() => {
-    const map = new Map<string, number>();
+    const map = new Map<string, { label: string; subtotal: number }>();
     for (const m of rows) {
-      const name = m.source_name ?? t("external", { defaultValue: "External" });
-      const cur = map.get(name) ?? 0;
-      map.set(name, m.exclude_from_stats ? cur : round2(cur + m.amount));
+      const key = chipKey(m);
+      const cur = map.get(key) ?? { label: m.source_name ?? t("external", { defaultValue: "External" }), subtotal: 0 };
+      if (!m.exclude_from_stats) cur.subtotal = round2(cur.subtotal + m.amount);
+      map.set(key, cur);
     }
     return [...map.entries()];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, t]);
 
   const visibleRows = useMemo(
-    () => rows.filter((m) => !hiddenSources.has(m.source_name ?? t("external", { defaultValue: "External" }))),
+    () => rows.filter((m) => !hiddenSources.has(chipKey(m))),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [rows, hiddenSources, t],
   );
   // Totals must be computed PER CURRENCY — summing mixed-currency amounts and
@@ -91,9 +102,11 @@ export function MonthDetailModal({
 
   const goAll = () => {
     onClose();
+    // Both bounds: without dateTo a rent payment already booked for next month
+    // would join a list titled "this month".
     void navigate({
       to: "/movements",
-      search: { ...(direction ? { direction } : {}), dateFrom: monthStart(todayISO()) },
+      search: { ...(direction ? { direction } : {}), dateFrom: monthStart(todayISO()), dateTo: monthEnd(todayISO()) },
     });
   };
 
@@ -156,19 +169,20 @@ export function MonthDetailModal({
 
       {tab === "list" && chips.length > 0 && (
         <div className="mb-3 flex flex-wrap gap-1.5">
-          {chips.map(([name, subtotal]) => {
-            const off = hiddenSources.has(name);
+          {chips.map(([key, { label, subtotal }]) => {
+            const off = hiddenSources.has(key);
+            const ccy = key.split("\u0000")[1];
             return (
               <button
-                key={name}
+                key={key}
                 type="button"
-                onClick={() => toggleSource(name)}
+                onClick={() => toggleSource(key)}
                 className={cn(
                   "rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors",
                   off ? "bg-negative-soft text-negative line-through" : "bg-positive-soft text-positive",
                 )}
               >
-                {name} ({subtotal.toFixed(2)})
+                {label} ({ccy ? formatMoney(subtotal, ccy, locale) : subtotal.toFixed(2)})
               </button>
             );
           })}

@@ -58,6 +58,7 @@ async function checkPreferredSource(db: SqlExecutor, sourceId: number | null | u
 }
 
 export async function createWhim(db: SqlExecutor, data: NewWhim): Promise<number> {
+  data = { ...data, amount: round2(data.amount) };
   if (!(data.amount > 0)) throw new DomainError("invalid_amount");
   await checkPreferredSource(db, data.source_id, data.currency.trim().toUpperCase());
   const ts = now();
@@ -74,6 +75,7 @@ export type WhimPatch = Partial<NewWhim>;
 export async function updateWhim(db: SqlExecutor, id: number, patch: WhimPatch): Promise<void> {
   const w = await getWhim(db, id);
   if (!w) throw new DomainError("not_found");
+  if (patch.amount !== undefined) patch = { ...patch, amount: round2(patch.amount) };
   if (patch.amount !== undefined && !(patch.amount > 0)) throw new DomainError("invalid_amount");
   if (patch.currency !== undefined && patch.currency.trim().toUpperCase() !== w.currency.toUpperCase() && w.linked_goal_id != null) {
     // The linked goal was created in the whim's currency and its allocations
@@ -99,6 +101,14 @@ export async function updateWhim(db: SqlExecutor, id: number, patch: WhimPatch):
   if (patch.url !== undefined) set("url", patch.url);
   set("updated_at", now());
   await db.execute(`UPDATE whims SET ${sets.join(", ")} WHERE id = ?`, [...params, id]);
+  // The linked goal's target IS the whim's price: keep them in step, or the
+  // goal reads "500 / 500 saved" while the purchase dialog asks for 800.
+  if (patch.amount !== undefined && w.linked_goal_id != null) {
+    await db.execute(
+      `UPDATE goals SET target_amount = ?, updated_at = ? WHERE id = ? AND status = 'active'`,
+      [round2(patch.amount), now(), w.linked_goal_id],
+    );
+  }
 }
 
 export async function purchaseWhim(

@@ -6,6 +6,7 @@
  * BOTH legs. Cross-currency keeps an independent `toAmount` on the IN leg.
  */
 import type { SqlExecutor } from "../types";
+import { round2 } from "@/domain/money";
 import { stageAttachmentUnlinks } from "./attachments";
 
 const now = () => new Date().toISOString();
@@ -65,9 +66,12 @@ export async function createTransferPair(
   const note = input.note ?? null;
   const outNote = input.outNote !== undefined ? input.outNote : note;
   const tagIds = input.tagIds ?? [];
-  const inAmount = input.toAmount ?? input.amount;
+  // Stored to the cent, like every other write path (savings deposits and goal
+  // allocations come through here straight from their forms).
+  const outAmount = round2(input.amount);
+  const inAmount = input.toAmount != null ? round2(input.toAmount) : outAmount;
 
-  const outId = await insertLeg(db, input.fromSourceId, input.amount, "out", input.date, outNote, false);
+  const outId = await insertLeg(db, input.fromSourceId, outAmount, "out", input.date, outNote, false);
   const inId = await insertLeg(
     db,
     input.toSourceId,

@@ -112,7 +112,12 @@ export function parseAmount(input: string, decimalSep = "."): number | null {
     const hasComma = s.includes(",");
     const hasDot = s.includes(".");
     if (hasComma && hasDot) {
-      s = s.replace(/,/g, ""); // dot decimal, commas are grouping ("1,234.56")
+      // Both present is unambiguous whatever the preset says: the rightmost
+      // separator is the decimal. A bank export in "1.234,56" form fed to the
+      // default dot-decimal path used to lose its comma and import as 1.23.
+      s = s.lastIndexOf(",") > s.lastIndexOf(".")
+        ? s.replace(/\./g, "").replace(/,/g, ".")
+        : s.replace(/,/g, "");
     } else if (hasComma) {
       // Comma-only under a dot-decimal locale: thousands groups ("1,234", "1,234,567")
       // are grouping → strip; otherwise it's a stray decimal comma ("1,5") → dot.

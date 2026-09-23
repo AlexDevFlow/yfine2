@@ -404,6 +404,20 @@ export function MovementsPage() {
   const [amtMax, setAmtMax] = useState("");
   const [filterTagIds, setFilterTagIds] = useState<number[]>(initialTagIds ?? []);
   const [tagMatch, setTagMatch] = useState<"or" | "and">("or");
+  // The page stays mounted when a drill-down (breakdown row, month modal's
+  // "View All", a budget card) navigates here with new search params, so the
+  // filters must follow the URL after the first render too — not only seed it.
+  const tagIdsKey = JSON.stringify(initialTagIds ?? []);
+  const firstSync = useRef(true);
+  useEffect(() => {
+    if (firstSync.current) { firstSync.current = false; return; }
+    setFilterDir(initialDir ?? "");
+    setDateFrom(initialDateFrom ?? "");
+    setDateTo(initialDateTo ?? "");
+    setFilterTagIds(initialTagIds ?? []);
+    if (initialDateFrom) setShowFilters(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialDir, initialDateFrom, initialDateTo, tagIdsKey]);
   // Which direction the breakdown dialog is analysing (null = closed).
   const [breakdownDir, setBreakdownDir] = useState<"in" | "out" | null>(null);
   // The list is grouped by year/month/day, which only reads correctly when the
@@ -448,6 +462,16 @@ export function MovementsPage() {
   const { data: sources } = useSources();
   const { data: tags } = useTags();
   const { data: prefs } = usePreferences();
+  // The KPI sums are raw (no FX), so they can only wear a currency symbol when
+  // every account in scope shares one: the filtered account's, or the single
+  // currency all accounts use. Otherwise the figures are shown bare rather
+  // than €1,000 + $500 being printed as "€1,500".
+  const scopeCcy = useMemo(() => {
+    const list = sources ?? [];
+    if (filterSource !== "") return list.find((s) => String(s.id) === filterSource)?.currency;
+    const set = new Set(list.map((s) => s.currency));
+    return set.size === 1 ? [...set][0] : undefined;
+  }, [sources, filterSource]);
   const { data: templates } = useMovementTemplates();
   const { data: savedViews } = useSavedViews();
   // Transfers must NOT target savings funds (they have a dedicated save/withdraw
@@ -517,6 +541,8 @@ export function MovementsPage() {
   const [saveViewOpen, setSaveViewOpen] = useState(false);
   const [newViewName, setNewViewName] = useState("");
   const [tplDraft, setTplDraft] = useState<MovementTemplate>({ name: "", direction: "out", source_id: null, amount: null, tag_ids: [], note: null });
+  /** Raw amount text while the template form is being typed into (parsed on add). */
+  const [tplAmount, setTplAmount] = useState("");
   const tauri = isTauri();
   const { data: attachCounts } = useAttachmentCounts();
   const [formError, setFormError] = useState<string>();
@@ -644,7 +670,8 @@ export function MovementsPage() {
   const rowDelete = useCallback((id: number) => { const m = byId(id); if (m) setDeleting(m); }, [byId]);
   const rowMakeRecurring = useCallback((id: number) => {
     const m = byId(id);
-    if (m) { setRecFreq("monthly"); setRecApplyMode("confirm"); setRecurringFrom(m); }
+    // Clear an error left behind by an earlier dialog — it isn't about this rule.
+    if (m) { setFormError(undefined); setRecFreq("monthly"); setRecApplyMode("confirm"); setRecurringFrom(m); }
   }, [byId]);
   // useMutation returns a NEW object every render — depend on the stable
   // `mutate` fn (destructured), or this callback changes identity each render
@@ -672,22 +699,26 @@ export function MovementsPage() {
   const submitTransfer = (v: TransferFormValues) => {
     setFormError(undefined);
     const onErr = (e: unknown) => setFormError(errText(e));
-    const patch = {
-      fromSourceId: v.fromSourceId,
-      toSourceId: v.toSourceId,
-      amount: v.amount,
-      toAmount: v.toAmount,
-      date: v.date,
-      note: v.note,
-      tagIds: v.tagIds,
-    };
+    const common = { amount: v.amount, toAmount: v.toAmount, date: v.date, note: v.note, tagIds: v.tagIds };
     if (trModal.editing) {
+      // A leg left "External" (null) is simply not re-pointed.
       updateTransfer.mutate(
-        { outLegId: trModal.editing.id, patch },
+        {
+          outLegId: trModal.editing.id,
+          patch: {
+            ...common,
+            ...(v.fromSourceId != null ? { fromSourceId: v.fromSourceId } : {}),
+            ...(v.toSourceId != null ? { toSourceId: v.toSourceId } : {}),
+          },
+        },
         { onSuccess: () => setTrModal({ open: false }), onError: onErr },
       );
     } else {
-      createTransfer.mutate(patch, { onSuccess: () => { rememberSource(v.fromSourceId); setTrModal({ open: false }); }, onError: onErr });
+      if (v.fromSourceId == null || v.toSourceId == null) return; // both selects are required on create
+      createTransfer.mutate(
+        { ...common, fromSourceId: v.fromSourceId, toSourceId: v.toSourceId },
+        { onSuccess: () => { rememberSource(v.fromSourceId); setTrModal({ open: false }); }, onError: onErr },
+      );
     }
   };
 
@@ -710,8 +741,14 @@ export function MovementsPage() {
   };
   const addTemplate = () => {
     if (!tplDraft.name.trim()) return;
-    saveTemplates.mutate([...(templates ?? []), { ...tplDraft, name: tplDraft.name.trim() }], {
-      onSuccess: () => setTplDraft({ name: "", direction: "out", source_id: null, amount: null, tag_ids: [], note: null }),
+    // The amount is evaluated once here, from the raw text: evaluating on every
+    // keystroke turned "12." into 12 and the next "5" into 125.
+    const amount = tplAmount.trim() === "" ? null : evalMoneyExpr(tplAmount);
+    saveTemplates.mutate([...(templates ?? []), { ...tplDraft, name: tplDraft.name.trim(), amount }], {
+      onSuccess: () => {
+        setTplDraft({ name: "", direction: "out", source_id: null, amount: null, tag_ids: [], note: null });
+        setTplAmount("");
+      },
     });
   };
   const deleteTemplate = (idx: number) => {
@@ -773,7 +810,7 @@ export function MovementsPage() {
           // Mean over the rows the totals were built from — transfers and
           // stat-excluded rows are in `count` but not in the sums.
           avg={(sums?.countedRows ?? 0) > 0 ? Math.round(((sums?.totalIn ?? 0) + (sums?.totalOut ?? 0)) / (sums!.countedRows) * 100) / 100 : 0}
-          ccy={prefs?.base_currency ?? undefined}
+          ccy={scopeCcy}
           locale={locale}
           activeDir={filterDir}
           onPick={setFilterDir}
@@ -1376,7 +1413,7 @@ export function MovementsPage() {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <Field label={t("amount_optional", { defaultValue: "Amount (optional)" })} htmlFor="tpl-amt">
-                <MoneyInput id="tpl-amt" value={tplDraft.amount != null ? String(tplDraft.amount) : ""} onValueChange={(v) => setTplDraft((d) => ({ ...d, amount: v.trim() === "" ? null : evalMoneyExpr(v) }))} className="num" />
+                <MoneyInput id="tpl-amt" value={tplAmount} onValueChange={setTplAmount} className="num" />
               </Field>
               <Field label={t("source", { defaultValue: "Source" })} htmlFor="tpl-src">
                 <Select id="tpl-src" value={tplDraft.source_id != null ? String(tplDraft.source_id) : ""} onChange={(e) => setTplDraft((d) => ({ ...d, source_id: e.target.value === "" ? null : Number(e.target.value) }))}>

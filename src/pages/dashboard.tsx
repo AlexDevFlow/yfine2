@@ -399,6 +399,7 @@ function QuickCreateModal({ action, onClose }: { action: QuickAction; onClose: (
           onCancel={onClose}
           onSubmit={(v) => {
             setError(undefined);
+            if (v.fromSourceId == null || v.toSourceId == null) return; // both selects are required on create
             createTransfer.mutate(
               { fromSourceId: v.fromSourceId, toSourceId: v.toSourceId, amount: v.amount, toAmount: v.toAmount, date: v.date, note: v.note, tagIds: v.tagIds },
               { onSuccess: (pair) => done({ to: "/movements", search: { focus: pair.outId } }), onError: onErr },

@@ -96,7 +96,8 @@ export interface NewRecurring {
 }
 
 export async function createRecurring(db: SqlExecutor, data: NewRecurring): Promise<number> {
-  if (!(data.amount > 0)) throw new DomainError("invalid_amount");
+  const amount = round2(data.amount);
+  if (!(amount > 0)) throw new DomainError("invalid_amount");
   validateDate(data.start_date);
   if (data.end_date) validateDate(data.end_date);
   if (data.end_date && data.end_date < data.start_date) throw new DomainError("invalid_range");
@@ -110,7 +111,7 @@ export async function createRecurring(db: SqlExecutor, data: NewRecurring): Prom
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,?,?) RETURNING id`,
     [
       name,
-      data.amount,
+      amount,
       data.direction,
       currency,
       data.frequency,
@@ -217,7 +218,7 @@ export async function updateRecurring(db: SqlExecutor, id: number, patch: Recurr
     source_id: patch.source_id !== undefined ? patch.source_id : cur.source_id,
     start_date: patch.start_date ?? cur.start_date,
     end_date: patch.end_date !== undefined ? patch.end_date : cur.end_date,
-    amount: patch.amount ?? cur.amount,
+    amount: patch.amount !== undefined ? round2(patch.amount) : cur.amount,
   };
   if (!(merged.amount > 0)) throw new DomainError("invalid_amount");
   if (patch.start_date !== undefined) validateDate(patch.start_date);
@@ -233,7 +234,7 @@ export async function updateRecurring(db: SqlExecutor, id: number, patch: Recurr
     params.push(v);
   };
   if (patch.name !== undefined) set("name", validatedName);
-  if (patch.amount !== undefined) set("amount", patch.amount);
+  if (patch.amount !== undefined) set("amount", merged.amount);
   if (patch.direction !== undefined) set("direction", patch.direction);
   if (patch.currency !== undefined) set("currency", merged.currency);
   if (patch.frequency !== undefined) set("frequency", patch.frequency);

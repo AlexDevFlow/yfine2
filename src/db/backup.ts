@@ -305,6 +305,14 @@ export async function resetAllData(db: SqlExecutor, fs?: AttachmentFs): Promise<
     for (const name of DEFAULT_TAGS) {
       await tx.execute(`INSERT INTO tags (name,created_at,updated_at) VALUES (?,?,?)`, [name, ts, ts]);
     }
+    // Preferences survive, but the ones that NAME rows by id must not: sources
+    // and tags have no AUTOINCREMENT, so the next account created gets id 1
+    // again and would silently inherit the old exclusion / template / view.
+    await tx.execute(
+      `UPDATE settings SET net_worth_excluded_json = '[]', last_source_id = NULL,
+         movement_templates_json = '[]', saved_views_json = '[]', updated_at = ? WHERE id = 1`,
+      [ts],
+    );
   });
   for (const a of att) await afs.remove(a.stored_name);
 }

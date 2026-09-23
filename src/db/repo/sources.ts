@@ -306,6 +306,7 @@ export async function mergeSources(
     `INSERT INTO notifications (type,title,body,related_entity,is_read,created_at) VALUES ('info',?,?,?,0,?)`,
     ["Sources merged", `${from.name} merged into ${to.name}`, `source:${toId}`, now()],
   );
+  await forgetSourceInSettings(db, fromId);
   await db.execute(`DELETE FROM sources WHERE id = ?`, [fromId]);
 }
 
@@ -337,6 +338,34 @@ export type DeleteAction =
   | { kind: "move_to"; targetId: number }
   | { kind: "make_external" };
 
+/**
+ * Settings that name a source BY ID must forget it when it goes: sources have
+ * no AUTOINCREMENT, so the next account created can get the same id and would
+ * silently inherit the deleted one's net-worth exclusion or "last used" slot.
+ */
+async function forgetSourceInSettings(db: SqlExecutor, id: number): Promise<void> {
+  const rows = await db.select<{ net_worth_excluded_json: string | null; last_source_id: number | null }>(
+    `SELECT net_worth_excluded_json, last_source_id FROM settings WHERE id = 1`,
+  );
+  const s = rows[0];
+  if (!s) return;
+  let excluded: number[] = [];
+  try {
+    const v = JSON.parse(s.net_worth_excluded_json || "[]");
+    excluded = Array.isArray(v) ? v.filter((n): n is number => typeof n === "number") : [];
+  } catch {
+    excluded = [];
+  }
+  const kept = excluded.filter((n) => n !== id);
+  const lastSource = s.last_source_id === id ? null : s.last_source_id;
+  if (kept.length !== excluded.length || lastSource !== s.last_source_id) {
+    await db.execute(
+      `UPDATE settings SET net_worth_excluded_json = ?, last_source_id = ?, updated_at = ? WHERE id = 1`,
+      [JSON.stringify(kept), lastSource, now()],
+    );
+  }
+}
+
 export async function deleteSource(
   db: SqlExecutor,
   id: number,
@@ -354,6 +383,7 @@ export async function deleteSource(
     [id],
   );
   if ((activeGoals[0]?.c ?? 0) > 0) throw new DomainError("active_goal_blocks_delete");
+  await forgetSourceInSettings(db, id);
 
   if (action.kind === "move_to") {
     // Moving onto itself would repoint nothing and then delete the source the

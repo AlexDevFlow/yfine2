@@ -189,8 +189,12 @@ export async function spendingBreakdown(
     if (tags.length === 0) {
       bump(tagAgg, "untagged", null, null, r.amount, r.amount);
     } else {
-      const share = r.amount / tags.length;
-      for (const tg of tags) bump(tagAgg, `tag:${tg.id}`, tg.name, tg.color, share, r.amount);
+      // Cent-exact split: every tag but the first gets the rounded share and the
+      // first absorbs the remainder, so the slices add up to the movement (10.00
+      // over three tags is 3.34 + 3.33 + 3.33, not three 3.33s that sum to 9.99).
+      const share = round2(r.amount / tags.length);
+      const first = round2(r.amount - share * (tags.length - 1));
+      tags.forEach((tg, i) => bump(tagAgg, `tag:${tg.id}`, tg.name, tg.color, i === 0 ? first : share, r.amount));
     }
     const sKey = r.source_id == null ? "external" : `source:${r.source_id}`;
     bump(srcAgg, sKey, r.source_name, null, r.amount, r.amount);

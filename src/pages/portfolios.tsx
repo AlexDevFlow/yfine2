@@ -824,6 +824,7 @@ export function PortfoliosPage() {
                     // price on any benign edit (rename/quantity/note). Omitting it leaves
                     // the fetched price intact; turning manual OFF still clears it in the repo.
                     patch: {
+                      asset_class: v.asset_class,
                       symbol: v.symbol,
                       display_name: v.display_name,
                       quantity: v.quantity,

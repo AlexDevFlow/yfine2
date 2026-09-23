@@ -130,10 +130,13 @@ export function BudgetsPage() {
   const [formError, setFormError] = useState<string>();
   const tagName = useMemo(() => new Map((tags ?? []).map((tg) => [tg.id, tg.name])), [tags]);
 
-  // Per-currency rollup across all budgets in the viewed period.
+  // Per-currency rollup across the SPENDING budgets in the viewed period. Income
+  // targets are a different question (money in, not out) — adding a 2000 salary
+  // target to a 500 groceries limit would print a meaningless "2300 / 2500".
   const summary = useMemo(() => {
     const m = new Map<string, { actual: number; available: number; remaining: number }>();
     for (const st of data ?? []) {
+      if (st.budget.direction !== "out") continue;
       const e = m.get(st.budget.currency) ?? { actual: 0, available: 0, remaining: 0 };
       e.actual = round2(e.actual + st.actual);
       e.available = round2(e.available + st.available);
