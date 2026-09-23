@@ -159,9 +159,22 @@ export interface NewHolding {
   address?: string | null;
 }
 
+/**
+ * A quantity, cost or price must be a real non-negative number. The form sends
+ * `Number(text) || 0`, so "-5" arrives as -5 and would silently produce a
+ * negative cost basis and a negative market value that net worth then counts.
+ */
+function checkNonNegative(v: number | null | undefined): void {
+  if (v == null) return;
+  if (!Number.isFinite(v) || v < 0) throw new DomainError("invalid_amount");
+}
+
 export async function createHolding(db: SqlExecutor, data: NewHolding): Promise<number> {
   const symbol = data.symbol.trim().toUpperCase();
   if (!symbol || symbol.length > 32) throw new DomainError("invalid_amount"); // reuse: bad input
+  checkNonNegative(data.quantity);
+  checkNonNegative(data.avg_cost);
+  checkNonNegative(data.last_price);
   if (!(await getPortfolio(db, data.portfolio_id))) throw new DomainError("not_found");
   const ts = now();
   const manual = data.manual_price ? 1 : 0;
@@ -196,6 +209,13 @@ export interface HoldingPatch {
 export async function updateHolding(db: SqlExecutor, id: number, patch: HoldingPatch): Promise<void> {
   const h = await getHolding(db, id);
   if (!h) throw new DomainError("not_found");
+  checkNonNegative(patch.quantity);
+  checkNonNegative(patch.avg_cost);
+  checkNonNegative(patch.last_price);
+  if (patch.symbol !== undefined) {
+    const symbol = patch.symbol.trim().toUpperCase();
+    if (!symbol || symbol.length > 32) throw new DomainError("invalid_amount");
+  }
   const sets: string[] = [];
   const params: unknown[] = [];
   const set = (c: string, v: unknown) => (sets.push(`${c} = ?`), params.push(v));
@@ -616,10 +636,53 @@ export async function holdingPriceHistory(db: SqlExecutor, id: number, rangeDays
   return points;
 }
 
+interface SourceHoldingRow {
+  id: number;
+  quantity: number;
+  avg_cost: number;
+  currency: string;
+}
+
+/**
+ * Holdings of every portfolio linked to `sourceId`, each paired with the rate
+ * that turns its own currency into the SOURCE currency (1 when they match).
+ * Holdings with no usable rate are dropped: the per-source series must never
+ * add a raw USD figure to a EUR balance, exactly like valueBySource — which
+ * is also why this is not limited to portfolios whose base currency matches
+ * the source. The sources page counts a converted USD portfolio in the EUR
+ * account's total today; its history has to be the same money.
+ */
+async function convertibleHoldingsForSource(
+  db: SqlExecutor,
+  sourceId: number,
+): Promise<{ h: SourceHoldingRow; rate: number }[]> {
+  const src = await getSource(db, sourceId);
+  if (!src) return [];
+  const rows = await db.select<SourceHoldingRow>(
+    `SELECT h.id, h.quantity, h.avg_cost, h.currency FROM holdings h
+     JOIN portfolios p ON h.portfolio_id = p.id WHERE p.source_id = ?`,
+    [sourceId],
+  );
+  const out: { h: SourceHoldingRow; rate: number }[] = [];
+  const rateByCcy = new Map<string, number | null>();
+  for (const h of rows) {
+    const ccy = h.currency.toUpperCase();
+    let rate: number | null;
+    if (ccy === src.currency.toUpperCase()) rate = 1;
+    else if (rateByCcy.has(ccy)) rate = rateByCcy.get(ccy)!;
+    else {
+      rate = await getRate(db, ccy, src.currency);
+      rateByCcy.set(ccy, rate);
+    }
+    if (rate != null) out.push({ h, rate });
+  }
+  return out;
+}
+
 /**
  * Distinct sorted snapshot dates for holdings whose portfolio is linked to
- * `sourceId` AND whose portfolio base_currency matches the source currency
- * (other-currency portfolios excluded), optionally within [start, end].
+ * `sourceId` and whose value can be expressed in the source currency (same
+ * currency, or an FX rate exists), optionally within [start, end].
  * Port of services/portfolios.py snapshot_dates_for_source (contract §31).
  */
 export async function snapshotDatesForSource(
@@ -628,16 +691,10 @@ export async function snapshotDatesForSource(
   start?: string,
   end?: string,
 ): Promise<string[]> {
-  const src = await getSource(db, sourceId);
-  if (!src) return [];
-  const ids = await db.select<{ id: number }>(
-    `SELECT h.id FROM holdings h JOIN portfolios p ON h.portfolio_id = p.id
-     WHERE p.source_id = ? AND p.base_currency = ?`,
-    [sourceId, src.currency],
-  );
+  const ids = await convertibleHoldingsForSource(db, sourceId);
   if (ids.length === 0) return [];
   const placeholders = ids.map(() => "?").join(",");
-  const params: unknown[] = ids.map((r) => r.id);
+  const params: unknown[] = ids.map((r) => r.h.id);
   let sql = `SELECT DISTINCT date FROM holding_price_snapshots WHERE holding_id IN (${placeholders})`;
   if (start != null) { sql += ` AND date >= ?`; params.push(start); }
   if (end != null) { sql += ` AND date <= ?`; params.push(end); }
@@ -647,10 +704,11 @@ export async function snapshotDatesForSource(
 }
 
 /**
- * Market value of the source's currency-matched portfolios at each date.
- * For each (holding, date): latest snapshot ≤ date, else avg_cost fallback (so
- * the line stays continuous). Only holdings whose portfolio base_currency equals
- * the source currency are summed; missing source → 0 for every date.
+ * Market value of the source's linked portfolios at each date, in the SOURCE
+ * currency. For each (holding, date): latest snapshot ≤ date, else avg_cost
+ * fallback (so the line stays continuous), converted with the holding's own
+ * FX rate; holdings with no rate are left out rather than summed raw.
+ * Missing source → 0 for every date.
  * Port of services/portfolios.py portfolio_value_by_source_over_time (§32).
  */
 export async function portfolioValueBySourceOverTime(
@@ -659,18 +717,12 @@ export async function portfolioValueBySourceOverTime(
   dates: string[],
 ): Promise<Record<string, number>> {
   if (dates.length === 0) return {};
-  const src = await getSource(db, sourceId);
   const zeros = (): Record<string, number> => Object.fromEntries(dates.map((d) => [d, 0]));
-  if (!src) return zeros();
-  const holdings = await db.select<{ id: number; quantity: number; avg_cost: number }>(
-    `SELECT h.id, h.quantity, h.avg_cost FROM holdings h JOIN portfolios p ON h.portfolio_id = p.id
-     WHERE p.source_id = ? AND p.base_currency = ?`,
-    [sourceId, src.currency],
-  );
+  const holdings = await convertibleHoldingsForSource(db, sourceId);
   if (holdings.length === 0) return zeros();
 
   const snaps = new Map<number, { date: string; price: number }[]>();
-  for (const h of holdings) {
+  for (const { h } of holdings) {
     snaps.set(
       h.id,
       await db.select<{ date: string; price: number }>(
@@ -685,7 +737,7 @@ export async function portfolioValueBySourceOverTime(
   // dates sorted (and writing back by their original key) yields byte-identical
   // values for every date regardless of the input array's order. The selected
   // price at each date is still "latest snapshot ≤ date, else avg_cost".
-  const cursors = holdings.map((h) => ({ h, series: snaps.get(h.id)!, cursor: 0 }));
+  const cursors = holdings.map(({ h, rate }) => ({ h, rate, series: snaps.get(h.id)!, cursor: 0 }));
   const ordered = [...dates].sort();
   const out: Record<string, number> = {};
   for (const d of ordered) {
@@ -696,7 +748,8 @@ export async function portfolioValueBySourceOverTime(
         price = c.series[c.cursor].price;
         c.cursor++;
       }
-      total += c.h.quantity * price;
+      // Same rounding as valueBySource: native value first, then converted.
+      total += c.rate === 1 ? round2(c.h.quantity * price) : round2(round2(c.h.quantity * price) * c.rate);
     }
     out[d] = round2(total);
   }

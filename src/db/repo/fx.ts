@@ -169,19 +169,37 @@ export async function refreshRates(db: SqlExecutor): Promise<RefreshResult> {
     }
   }
 
-  // 3) Hand-entered pairs that don't touch the pivot (e.g. USD→GBP) would keep
-  //    shadowing the fresh star rates with a stale number, since getRate prefers
-  //    a direct pair. Re-quote the ones we can.
+  // 3) Hand-entered pairs that don't touch the pivot (e.g. USD→GBP, BTC→USD)
+  //    would keep shadowing the fresh star rates with a stale number, since
+  //    getRate prefers a direct pair. Re-quote the ones we can.
   for (const r of existing) {
     const from = r.from_currency.toUpperCase();
     const to = r.to_currency.toUpperCase();
     if (from === pivot || to === pivot || from === to) continue;
-    if (!FRANKFURTER_CODES.has(from) || !FRANKFURTER_CODES.has(to)) continue;
-    attempted += 1;
-    const rates = await fetchFiatRates(from, [to]);
-    if (rates == null) failed += 1;
-    else if (rates[to] != null) {
-      await upsertRate(db, from, to, rates[to]);
+    const fiatFrom = FRANKFURTER_CODES.has(from);
+    const fiatTo = FRANKFURTER_CODES.has(to);
+    const cryptoFrom = !fiatFrom && from in COINGECKO_ID_MAP;
+    const cryptoTo = !fiatTo && to in COINGECKO_ID_MAP;
+    let rate: number | null = null;
+    if (fiatFrom && fiatTo) {
+      attempted += 1;
+      const rates = await fetchFiatRates(from, [to]);
+      if (rates == null) failed += 1;
+      else rate = rates[to] ?? null;
+    } else if (cryptoFrom && fiatTo) {
+      attempted += 1;
+      rate = await fetchCryptoRate(from, to);
+      if (rate == null) failed += 1;
+    } else if (fiatFrom && cryptoTo) {
+      // The user stored the pair fiat→crypto; the provider quotes crypto in
+      // fiat, so keep their direction and store the reciprocal.
+      attempted += 1;
+      const price = await fetchCryptoRate(to, from);
+      if (price == null) failed += 1;
+      else rate = 1 / price;
+    } else continue;
+    if (rate != null) {
+      await upsertRate(db, from, to, rate);
       updated += 1;
     }
   }

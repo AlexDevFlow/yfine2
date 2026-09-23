@@ -14,7 +14,13 @@ import * as budgets from "./repo/budgets";
 import * as recurring from "./repo/recurring";
 import { forecastCashflow } from "./repo/forecast";
 import { createSaving, fundBalanceTrend } from "./repo/savings";
-import { upsertRate } from "./repo/exchange-rates";
+import { getRate, upsertRate } from "./repo/exchange-rates";
+import * as portfolios from "./repo/portfolios";
+import { sourceBalanceHistory } from "./repo/history";
+import { clearPriceCache, fetchCryptoPrice, fetchStockPrice, setPriceTransport, type PriceTransport } from "./repo/prices";
+import { refreshRates } from "./repo/fx";
+import { resetAllData, type AttachmentFs } from "./backup";
+import { addAttachment } from "./repo/attachments";
 import { tryParseDate, parseCsv, isValidCalendarDate } from "./importers/csv";
 import { parseOfxDate } from "./importers/ofx";
 import { addMonthsISO } from "@/lib/date";
@@ -431,5 +437,141 @@ describe("scheduler ignores rules that can never fire again", () => {
     expect(res).toEqual({ applied: 0, errors: 0 });
     const n = await db.select<{ c: number }>(`SELECT COUNT(*) c FROM notifications`);
     expect(n[0].c).toBe(0);
+  });
+});
+
+describe("per-source history values foreign-currency holdings in the source currency", () => {
+  async function snap(db: SqlExecutor, holdingId: number, date: string, price: number) {
+    await db.execute(
+      `INSERT INTO holding_price_snapshots (holding_id,date,price,created_at) VALUES (?,?,?,?)`,
+      [holdingId, date, price, `${date}T00:00:00`],
+    );
+  }
+
+  it("converts a USD holding inside a EUR portfolio instead of adding the raw dollars", async () => {
+    const { db } = await makeMemDb();
+    const s = await sources.createSource(db, { name: "Broker", currency: "EUR", starting_balance: 100 });
+    const pid = await portfolios.createPortfolio(db, { name: "P", base_currency: "EUR", source_id: s.id });
+    const hid = await portfolios.createHolding(db, { portfolio_id: pid, asset_class: "stock", symbol: "AAPL", quantity: 2, avg_cost: 100, currency: "USD", manual_price: true, last_price: 150 });
+    await snap(db, hid, "2026-01-10", 150); // 300 USD
+    await upsertRate(db, "USD", "EUR", 0.5);
+
+    const values = await portfolios.portfolioValueBySourceOverTime(db, s.id, ["2026-01-05", "2026-01-10"]);
+    expect(values["2026-01-05"]).toBe(100); // avg-cost fallback 200 USD → 100 EUR
+    expect(values["2026-01-10"]).toBe(150); // 300 USD → 150 EUR, never 300
+
+    // The last history point agrees with what the sources page shows today.
+    const hist = await sourceBalanceHistory(db, s.id);
+    const bySource = await portfolios.valueBySource(db);
+    expect(hist[hist.length - 1].portfolios).toBe(bySource.get(s.id)!.value);
+  });
+
+  it("leaves a holding out entirely when its currency has no rate", async () => {
+    const { db } = await makeMemDb();
+    const s = await sources.createSource(db, { name: "Broker", currency: "EUR", starting_balance: 0 });
+    const pid = await portfolios.createPortfolio(db, { name: "P", base_currency: "EUR", source_id: s.id });
+    const hid = await portfolios.createHolding(db, { portfolio_id: pid, asset_class: "stock", symbol: "AAPL", quantity: 2, avg_cost: 100, currency: "USD" });
+    await snap(db, hid, "2026-01-10", 150);
+    expect(await portfolios.snapshotDatesForSource(db, s.id)).toEqual([]);
+    expect(await portfolios.portfolioValueBySourceOverTime(db, s.id, ["2026-01-10"])).toEqual({ "2026-01-10": 0 });
+  });
+});
+
+describe("holding inputs must be real non-negative numbers", () => {
+  it("rejects a negative quantity, cost or price on create and update", async () => {
+    const { db } = await makeMemDb();
+    const s = await sources.createSource(db, { name: "Broker", currency: "EUR" });
+    const pid = await portfolios.createPortfolio(db, { name: "P", base_currency: "EUR", source_id: s.id });
+    const base = { portfolio_id: pid, asset_class: "stock" as const, symbol: "X", currency: "EUR" };
+    await expect(portfolios.createHolding(db, { ...base, quantity: -1 })).rejects.toMatchObject({ code: "invalid_amount" });
+    await expect(portfolios.createHolding(db, { ...base, avg_cost: -5 })).rejects.toMatchObject({ code: "invalid_amount" });
+    await expect(portfolios.createHolding(db, { ...base, manual_price: true, last_price: -2 })).rejects.toMatchObject({ code: "invalid_amount" });
+    await expect(portfolios.createHolding(db, { ...base, quantity: Number.NaN })).rejects.toMatchObject({ code: "invalid_amount" });
+    const hid = await portfolios.createHolding(db, { ...base, quantity: 1, avg_cost: 10 });
+    await expect(portfolios.updateHolding(db, hid, { quantity: -3 })).rejects.toMatchObject({ code: "invalid_amount" });
+    await expect(portfolios.updateHolding(db, hid, { symbol: "   " })).rejects.toMatchObject({ code: "invalid_amount" });
+    expect((await portfolios.getHolding(db, hid))!.quantity).toBe(1);
+  });
+});
+
+describe("price providers answering 0 never overwrite a known price", () => {
+  function mock(routes: { match: string; body: unknown }[]): PriceTransport {
+    const t: PriceTransport = async (url) => {
+      const r = routes.find((x) => url.includes(x.match));
+      return { ok: r != null, status: r ? 200 : 500, json: async () => r?.body } as Response;
+    };
+    setPriceTransport(t);
+    return t;
+  }
+
+  it("treats a zero quote as no quote", async () => {
+    clearPriceCache();
+    mock([
+      { match: "simple/price", body: { bitcoin: { usd: 0 } } },
+      { match: "finance/chart", body: { chart: { result: [{ meta: { regularMarketPrice: 0 } }] } } },
+    ]);
+    try {
+      expect(await fetchCryptoPrice("BTC", "usd")).toBeNull();
+      expect(await fetchStockPrice("AAPL")).toBeNull();
+    } finally {
+      setPriceTransport(null);
+      clearPriceCache();
+    }
+  });
+});
+
+describe("rate refresh re-quotes hand-entered crypto pairs that bypass the pivot", () => {
+  it("updates a stale BTC→USD row when the pivot is EUR", async () => {
+    const { db } = await makeMemDb();
+    await sources.createSource(db, { name: "EUR", currency: "EUR", starting_balance: 0 });
+    await db.execute(`UPDATE settings SET base_currency = 'EUR'`);
+    await upsertRate(db, "BTC", "USD", 1); // stale, and preferred by getRate over any chain
+    await upsertRate(db, "USD", "BTC", 1); // stored the other way round by the user too
+    const calls: string[] = [];
+    setPriceTransport(async (url) => {
+      calls.push(url);
+      const body = url.includes("vs_currencies=usd")
+        ? { bitcoin: { usd: 50000 } }
+        : url.includes("vs_currencies=eur")
+          ? { bitcoin: { eur: 40000 } }
+          : { rates: { USD: 1.25 } };
+      return { ok: true, status: 200, json: async () => body } as Response;
+    });
+    try {
+      const res = await refreshRates(db);
+      expect(res.offline).toBe(false);
+      expect(await getRate(db, "BTC", "USD")).toBe(50000);
+      expect(await getRate(db, "USD", "BTC")).toBeCloseTo(1 / 50000, 12);
+      expect(await getRate(db, "BTC", "EUR")).toBe(40000);
+    } finally {
+      setPriceTransport(null);
+      clearPriceCache();
+    }
+  });
+});
+
+describe("reset keeps attachment files until the wipe has committed", () => {
+  it("removes files only after the transaction succeeds", async () => {
+    const { db } = await makeMemDb();
+    const s = await sources.createSource(db, { name: "A", currency: "EUR" });
+    const mid = await movements.createMovement(db, { source_id: s.id, amount: 1, direction: "out", date: "2026-05-01" });
+    const store = new Map<string, Uint8Array>();
+    await addAttachment(db, mid, { name: "r.png", type: "image/png", bytes: new Uint8Array([1]) }, async (n, b) => { store.set(n, b); });
+    const order: string[] = [];
+    const fs: AttachmentFs = {
+      async read() { throw new Error("no"); },
+      async write() {},
+      async list() { return [...store.keys()]; },
+      async remove(n) { order.push(`remove:${n}`); store.delete(n); },
+    };
+    const origExecute = db.execute.bind(db);
+    db.execute = async (sql: string, params?: unknown[]) => {
+      if (sql.startsWith("DELETE FROM movement_attachments")) order.push("wipe");
+      return origExecute(sql, params);
+    };
+    await resetAllData(db, fs);
+    expect(order[0]).toBe("wipe");
+    expect(order[order.length - 1]).toMatch(/^remove:/);
+    expect(store.size).toBe(0);
   });
 });

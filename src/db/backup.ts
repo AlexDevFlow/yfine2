@@ -289,9 +289,10 @@ export async function importAll(db: SqlExecutor, data: BackupData): Promise<void
  */
 export async function resetAllData(db: SqlExecutor, fs?: AttachmentFs): Promise<void> {
   const afs = resolveAttachmentFs(fs);
-  // Unlink attachment files first; their rows are dropped in the wipe below.
+  // Capture the attachment file names now, but unlink them only AFTER the wipe
+  // has committed: if the transaction fails and rolls back, the rows survive
+  // and must still point at files that exist (same rule as the delete cascades).
   const att = await db.select<{ stored_name: string }>(`SELECT stored_name FROM movement_attachments`);
-  for (const a of att) await afs.remove(a.stored_name);
 
   await withTx(db, async (tx) => {
     // children-first, skip settings (user preferences survive a reset)
@@ -305,6 +306,7 @@ export async function resetAllData(db: SqlExecutor, fs?: AttachmentFs): Promise<
       await tx.execute(`INSERT INTO tags (name,created_at,updated_at) VALUES (?,?,?)`, [name, ts, ts]);
     }
   });
+  for (const a of att) await afs.remove(a.stored_name);
 }
 
 // ---- .yfine archive ----
