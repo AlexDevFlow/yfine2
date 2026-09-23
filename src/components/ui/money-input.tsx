@@ -62,6 +62,11 @@ function normalizeNumber(tok: string): string {
     } else {
       s = tok.replace(/,/g, "."); // 1,5 / 0,125 → decimal comma
     }
+  } else if (/^\d{1,3}(\.\d{3}){2,}$/.test(tok)) {
+    // Two or more dot groups can only be grouping ("1.000.000"); a single dot
+    // stays the decimal point, since "1.000" is one euro in a dot-decimal
+    // locale. Anything else with several dots ("1..2") is still rejected.
+    s = tok.replace(/\./g, "");
   } else {
     s = tok;
   }

@@ -120,10 +120,9 @@ export function useCreateSource() {
       const db = await getDb();
       return sources.createSource(db, data);
     },
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ["sources"] });
-      void qc.invalidateQueries({ queryKey: ["dashboard"] });
-    },
+    // A starting balance is money: it feeds the net-worth history, the
+    // consolidated total and the forecast, not just the sources list.
+    onSuccess: () => invalidateMoney(qc),
   });
 }
 

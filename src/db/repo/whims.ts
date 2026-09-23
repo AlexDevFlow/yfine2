@@ -120,7 +120,9 @@ export async function purchaseWhim(
   // Save-for-then-buy: drain a still-funded linked goal into the purchase source.
   if (whim.linked_goal_id != null) {
     const goal = await getGoal(db, whim.linked_goal_id);
-    if (goal && goal.status !== "cancelled") {
+    // Only an ACTIVE goal can still hold money: closeGoal rejects any other
+    // status, and a completed goal already had its allocation rows dropped.
+    if (goal && goal.status === "active") {
       const allocs = await db.select<{ c: number }>(`SELECT COUNT(*) c FROM goal_allocations WHERE goal_id = ?`, [goal.id]);
       if ((allocs[0]?.c ?? 0) > 0) {
         // Refund the saved money into the purchase source. Paying from the goal's

@@ -117,6 +117,10 @@ export function parseAmount(input: string, decimalSep = "."): number | null {
       // Comma-only under a dot-decimal locale: thousands groups ("1,234", "1,234,567")
       // are grouping → strip; otherwise it's a stray decimal comma ("1,5") → dot.
       s = /^-?\d{1,3}(,\d{3})+$/.test(s) ? s.replace(/,/g, "") : s.replace(/,/g, ".");
+    } else if (/^-?\d{1,3}(\.\d{3}){2,}$/.test(s)) {
+      // Two or more dot groups can only be grouping ("1.234.567") — a comma-locale
+      // export fed to a dot-decimal preset. A single dot stays the decimal.
+      s = s.replace(/\./g, "");
     }
   }
   const n = Number(s);

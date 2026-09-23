@@ -406,6 +406,7 @@
   "days_due": "en {{n}} días",
   "due_today": "Vence hoy",
   "overdue": "Vencido hace {{n}} días",
+  "recurring_ended_label": "Finalizado",
   "due_tomorrow": "Mañana",
   "usage_count": "{{n}} usos",
   "welcome_title": "¡Bienvenido a Yfine!",

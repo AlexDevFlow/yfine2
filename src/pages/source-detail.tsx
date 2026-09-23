@@ -97,7 +97,13 @@ export function SourceDetail() {
     tagIds: tagIds.length > 0 ? tagIds : undefined,
   }), [id, q, direction, dateFrom, dateTo, amtMin, amtMax, tagIds]);
 
-  const { data: movements, isLoading } = useMovements(filters, 500);
+  // Same generous cap as the Movements page: the grouped rollups need the whole
+  // filtered set, so everything up to the cap is loaded and a note says when
+  // older rows were left out (rather than silently dropping months).
+  const LOAD_CAP = 1000;
+  const { data: movements, isLoading } = useMovements(filters, LOAD_CAP);
+  const loaded = movements?.items.length ?? 0;
+  const truncated = (movements?.total ?? 0) > loaded;
   const { data: sums } = useMovementSums(filters);
 
   const source = (sources ?? []).find((s) => s.id === id);
@@ -351,6 +357,16 @@ export function SourceDetail() {
             </Card>
           );
         }),
+      )}
+
+      {truncated && (
+        <p className="px-1 text-xs text-muted">
+          {t("movements_truncated", {
+            defaultValue: "Showing the most recent {{shown}} of {{total}} — narrow with filters or search to see the rest.",
+            shown: loaded,
+            total: movements?.total ?? 0,
+          })}
+        </p>
       )}
     </div>
   );

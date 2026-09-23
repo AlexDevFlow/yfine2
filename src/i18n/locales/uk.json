@@ -406,6 +406,7 @@
   "days_due": "через {{n}} днів",
   "due_today": "Сьогодні",
   "overdue": "Прострочено на {{n}} днів",
+  "recurring_ended_label": "Завершено",
   "due_tomorrow": "Завтра",
   "usage_count": "{{n}} використань",
   "welcome_title": "Ласкаво просимо до Yfine!",

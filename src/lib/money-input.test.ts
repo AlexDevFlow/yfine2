@@ -23,6 +23,8 @@ describe("evalMoneyExpr (math-aware amount input)", () => {
     expect(evalMoneyExpr("1,000")).toBe(1000);
     expect(evalMoneyExpr("1,000.50")).toBe(1000.5);
     expect(evalMoneyExpr("1,000,000")).toBe(1000000);
+    expect(evalMoneyExpr("1.000.000")).toBe(1000000); // several dots can only be grouping
+    expect(evalMoneyExpr("1.000")).toBe(1); // a single dot stays the decimal point
     expect(evalMoneyExpr("1.234,56")).toBe(1234.56); // IT full format
     expect(evalMoneyExpr("1,000+250")).toBe(1250); // per-operand normalization
     expect(evalMoneyExpr("1,5+2,5")).toBe(4); // decimal commas still work

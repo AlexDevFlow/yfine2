@@ -406,6 +406,7 @@
   "days_due": "in {{n}} days",
   "due_today": "Due today",
   "overdue": "Overdue by {{n}} days",
+  "recurring_ended_label": "Ended",
   "due_tomorrow": "Tomorrow",
   "usage_count": "{{n}} uses",
   "welcome_title": "Welcome to Yfine!",

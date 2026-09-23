@@ -16,6 +16,8 @@ describe("csv heuristics", () => {
     // dot-decimal locale: comma is the THOUSANDS separator, not a decimal.
     expect(parseAmount("1,234", ".")).toBe(1234);
     expect(parseAmount("1,234,567", ".")).toBe(1234567);
+    expect(parseAmount("1.234.567", ".")).toBe(1234567); // several dot groups can only be grouping
+    expect(parseAmount("1.234", ".")).toBe(1.234); // a single dot stays the decimal
     expect(parseAmount("1,5", ".")).toBe(1.5); // stray non-group comma → decimal fallback
     expect(parseAmount("", ".")).toBeNull();
   });

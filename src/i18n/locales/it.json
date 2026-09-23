@@ -406,6 +406,7 @@
   "days_due": "tra {{n}} giorni",
   "due_today": "Scade oggi",
   "overdue": "Scaduto da {{n}} giorni",
+  "recurring_ended_label": "Terminato",
   "due_tomorrow": "Domani",
   "usage_count": "{{n}} utilizzi",
   "welcome_title": "Benvenuto su Yfine!",

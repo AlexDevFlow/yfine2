@@ -32,7 +32,7 @@ import type { WizardMode } from "@/db/repo/savings-migration";
 import type { TagRow } from "@/db/schema-types";
 import { round2 } from "@/domain/money";
 import { cn } from "@/lib/cn";
-import { dayLabel, monthLabel, todayISO } from "@/lib/date";
+import { dayLabel, lastNMonths, monthLabel, todayISO } from "@/lib/date";
 import { formatMoney } from "@/lib/format";
 import { useErrorText } from "@/lib/use-error-text";
 
@@ -125,8 +125,12 @@ function TagChips({ tags, selected, onChange }: { tags: TagRow[]; selected: numb
   );
 }
 
+/** Months covered by the trend charts and the calendar drill-down. */
+const TREND_MONTHS = 12;
+
 interface SavingFormValues {
-  fromSourceId: number;
+  /** null = the deposit has no from-account (an imported legacy saving) and keeps it that way. */
+  fromSourceId: number | null;
   amount: number;
   date: string;
   note: string | null;
@@ -146,8 +150,12 @@ function SavingForm({ sources, tags, editing, onCancel, onSubmit, pending, error
   const { t } = useTranslation();
   // Funds can't fund a saving — only regular accounts.
   const accounts = sources.filter((s) => s.is_savings_fund === 0);
+  // An edited deposit with NO from-account (migrated legacy saving, or its
+  // account was deleted as "external") must stay external unless the user picks
+  // one — defaulting to the first account would silently debit it on save.
+  const external = editing != null && editing.from_source_id == null;
   const [fromSourceId, setFromSourceId] = useState(
-    String(editing?.from_source_id ?? accounts[0]?.id ?? ""),
+    editing ? (editing.from_source_id != null ? String(editing.from_source_id) : "") : String(accounts[0]?.id ?? ""),
   );
   const [amount, setAmount] = useState(editing ? String(editing.amount) : "");
   const [date, setDate] = useState(editing?.date ?? todayISO());
@@ -156,13 +164,14 @@ function SavingForm({ sources, tags, editing, onCancel, onSubmit, pending, error
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    onSubmit({ fromSourceId: Number(fromSourceId), amount: Number(amount) || 0, date, note: note || null, tagIds });
+    onSubmit({ fromSourceId: fromSourceId === "" ? null : Number(fromSourceId), amount: Number(amount) || 0, date, note: note || null, tagIds });
   };
 
   return (
     <form onSubmit={submit} className="space-y-4">
       <Field label={t("from", { defaultValue: "From" })} htmlFor="sv-src">
-        <Select id="sv-src" value={fromSourceId} onChange={(e) => setFromSourceId(e.target.value)} required>
+        <Select id="sv-src" value={fromSourceId} onChange={(e) => setFromSourceId(e.target.value)} required={!external}>
+          {external && <option value="">{t("external", { defaultValue: "External" })}</option>}
           {accounts.map((s) => (
             <option key={s.id} value={s.id}>{s.name} · {formatMoney(s.balance, s.currency)}</option>
           ))}
@@ -319,7 +328,7 @@ export function SavingsPage() {
   const { data: tags } = useTags();
   const { data: wizard } = useSavingsWizardStatus();
   const { data: totals } = useSavingsTotals();
-  const { data: trends } = useSavingsTrends();
+  const { data: trends } = useSavingsTrends(TREND_MONTHS);
 
   // Filters + pagination.
   const [page, setPage] = useState(1);
@@ -378,7 +387,10 @@ export function SavingsPage() {
   const chartSeries: Series[] = useMemo(() => {
     const rows = (chartMode === "contributions" ? trends?.contributions : trends?.fundBalance) ?? [];
     if (rows.length === 0) return [];
-    const monthsAxis = [...new Set(rows.map((r) => r.month))].sort();
+    // The chart places points by index, so the axis must carry EVERY month of
+    // the window: a month with no deposits is a 0 on the line, not a missing
+    // step that makes Feb sit next to May.
+    const monthsAxis = [...new Set([...lastNMonths(todayISO(), TREND_MONTHS), ...rows.map((r) => r.month)])].sort();
     const currencies = [...new Set(rows.map((r) => r.currency))].sort();
     const byKey = new Map(rows.map((r) => [`${r.month}|${r.currency}`, r.value]));
     return currencies.map((cur, i) => {
@@ -425,13 +437,15 @@ export function SavingsPage() {
         date: v.date,
         note: v.note,
         tagIds: v.tagIds,
-        fromSourceId: v.fromSourceId,
+        // Only re-point the OUT leg when the user actually picked another account.
+        ...(v.fromSourceId != null && v.fromSourceId !== editing.from_source_id ? { fromSourceId: v.fromSourceId } : {}),
       };
       update.mutate(
         { id: editing.id, patch },
         { onSuccess: () => setForm(null), onError: (e) => setFormError(errText(e)) },
       );
     } else {
+      if (v.fromSourceId == null) return; // the select is required on create
       const data: NewSaving = { fromSourceId: v.fromSourceId, amount: v.amount, date: v.date, note: v.note, tagIds: v.tagIds };
       create.mutate(data, { onSuccess: () => setForm(null), onError: (e) => setFormError(errText(e)) });
     }

@@ -327,12 +327,14 @@ describe("recurring rules past their end date", () => {
     const acct = await sources.createSource(db, { name: "A", currency: "EUR", starting_balance: 100 });
     await recurring.createRecurring(db, { name: "Old gym", amount: 30, direction: "out", currency: "EUR", frequency: "monthly", start_date: "2025-01-01", end_date: "2025-12-31", source_id: acct.id });
     await recurring.createRecurring(db, { name: "Rent", amount: 700, direction: "out", currency: "EUR", frequency: "monthly", start_date: "2026-01-01", source_id: acct.id });
-    // A rule still inside its end date but whose next occurrence would land past it.
+    // A rule still inside its end date but whose next occurrence would land past
+    // it can never fire again either — the scheduler skips it, so the summary
+    // must not project it.
     const rid = await recurring.createRecurring(db, { name: "Course", amount: 50, direction: "out", currency: "EUR", frequency: "monthly", start_date: "2026-05-20", end_date: "2026-06-10", source_id: acct.id });
     await recurring.applyRecurringById(db, rid, {}, "2026-05-20"); // next_due → 2026-06-20 > end
     const sum = await recurring.monthlySummary(db, "2026-06-01");
-    expect(sum.byCurrency.EUR.outflow).toBe(750);
-    expect(sum.byCurrency.EUR.countOut).toBe(2);
+    expect(sum.byCurrency.EUR.outflow).toBe(700);
+    expect(sum.byCurrency.EUR.countOut).toBe(1);
     const { upcomingRecurring } = await import("./repo/dashboard");
     const up = await upcomingRecurring(db, "2026-06-01", 10);
     expect(up.map((u) => u.name)).toEqual(["Rent"]);
@@ -573,5 +575,56 @@ describe("reset keeps attachment files until the wipe has committed", () => {
     expect(order[0]).toBe("wipe");
     expect(order[order.length - 1]).toMatch(/^remove:/);
     expect(store.size).toBe(0);
+  });
+});
+
+describe("recurring rule edits and lifecycle", () => {
+  it("an amount-only edit keeps the rolled-forward schedule of a rule made from a movement", async () => {
+    const { db } = await makeMemDb();
+    const acct = await sources.createSource(db, { name: "A", currency: "EUR", starting_balance: 1000 });
+    const mid = await movements.createMovement(db, { source_id: acct.id, amount: 50, direction: "out", date: "2026-01-15", note: "Gym" });
+    const rid = await recurring.makeRecurringFromMovement(db, mid, "monthly", "auto", "2026-09-23");
+    const before = (await recurring.getRecurring(db, rid))!;
+    expect(before.next_due_date).toBe("2026-10-15");
+
+    // The edit form always sends start_date; unchanged, it must not re-anchor.
+    await recurring.updateRecurring(db, rid, { amount: 60, start_date: before.start_date });
+    const after = (await recurring.getRecurring(db, rid))!;
+    expect(after.amount).toBe(60);
+    expect(after.next_due_date).toBe("2026-10-15");
+    // Nothing to back-fill on the next tick.
+    expect(await recurring.processDueRecurring(db, "2026-09-23")).toEqual({ applied: 0, errors: 0 });
+
+    // A deliberately changed start date still re-anchors the schedule.
+    await recurring.updateRecurring(db, rid, { start_date: "2026-11-01" });
+    expect((await recurring.getRecurring(db, rid))!.next_due_date).toBe("2026-11-01");
+  });
+
+  it("a rule cannot book plain movements on a savings fund", async () => {
+    const { db } = await makeMemDb();
+    const fund = await sources.ensureFundForCurrency(db, "EUR");
+    await expect(
+      recurring.createRecurring(db, { name: "Drip", amount: 10, direction: "in", currency: "EUR", frequency: "monthly", start_date: "2026-05-01", source_id: fund.id }),
+    ).rejects.toMatchObject({ code: "fund_transfer_not_allowed" });
+  });
+
+  it("lists a rule whose next occurrence is past its end date as ended, not overdue", async () => {
+    const { db } = await makeMemDb();
+    const acct = await sources.createSource(db, { name: "A", currency: "EUR", starting_balance: 100 });
+    const rid = await recurring.createRecurring(db, { name: "Course", amount: 50, direction: "out", currency: "EUR", frequency: "monthly", start_date: "2026-05-20", end_date: "2026-06-10", source_id: acct.id });
+    await recurring.applyRecurringById(db, rid, {}, "2026-05-20"); // next_due → 2026-06-20 > end
+    const [row] = await recurring.listRecurring(db, "2026-06-01");
+    expect(row.ended).toBe(true);
+    expect(recurring.isRuleActive(row, "2026-06-01")).toBe(false);
+    const summary = await recurring.monthlySummary(db, "2026-06-01");
+    expect(summary.totalCount).toBe(0);
+  });
+});
+
+describe("tag colour tint", () => {
+  it("expands short hex and drops an existing alpha before adding its own", () => {
+    expect(tags.tintOf("#abc")).toBe("#aabbcc22");
+    expect(tags.tintOf("#112233")).toBe("#11223322");
+    expect(tags.tintOf("#11223344")).toBe("#11223322");
   });
 });

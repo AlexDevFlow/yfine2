@@ -9,7 +9,7 @@ import { Modal } from "@/components/ui/modal";
 import { useConfirm } from "@/components/ui/confirm";
 import { isPreviewDb } from "@/db/connection";
 import { useCreateTag, useDeleteTag, useMergeTags, useTagsWithUsage, useUpdateTag } from "@/db/queries";
-import { isValidHex, type TagWithUsage } from "@/db/repo/tags";
+import { isValidHex, tintOf, type TagWithUsage } from "@/db/repo/tags";
 import { cn } from "@/lib/cn";
 import { useErrorText } from "@/lib/use-error-text";
 
@@ -189,7 +189,8 @@ function TagForm({ initial, onCancel, onSubmit, pending, error }: {
       {error ? <p className="text-sm text-negative">{error}</p> : null}
       <div className="flex justify-end gap-2 pt-1">
         <Button type="button" variant="ghost" onClick={onCancel}>{t("cancel", { defaultValue: "Cancel" })}</Button>
-        <Button type="submit" disabled={pending || !name.trim()}>{t("save", { defaultValue: "Save" })}</Button>
+        {/* A half-typed hex must not save the PREVIOUS valid colour behind the user's back. */}
+        <Button type="submit" disabled={pending || !name.trim() || (hex.trim() !== "" && !isValidHex(hex))}>{t("save", { defaultValue: "Save" })}</Button>
       </div>
     </form>
   );
@@ -260,7 +261,7 @@ export function TagsPage() {
             >
               <span
                 className="grid h-9 w-9 shrink-0 place-items-center rounded-full"
-                style={{ background: tag.color ? `${tag.color}22` : "var(--surface-2)", color: tag.color ?? "var(--muted)" }}
+                style={{ background: tag.color ? tintOf(tag.color) : "var(--surface-2)", color: tag.color ?? "var(--muted)" }}
               >
                 <TagIcon className="h-4 w-4" />
               </span>

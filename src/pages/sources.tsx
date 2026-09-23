@@ -387,7 +387,8 @@ function SourceCard({
         </div>
 
         <div className="mt-auto pt-3">
-          <SourceSparkline sourceId={source.id} balance={source.balance} currency={source.currency} locale={locale} />
+          {/* The line plots cash + portfolios, so its colour follows the same total as the headline. */}
+          <SourceSparkline sourceId={source.id} balance={source.total_value} currency={source.currency} locale={locale} />
         </div>
       </div>
 

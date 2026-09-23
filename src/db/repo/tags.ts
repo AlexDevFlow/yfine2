@@ -32,6 +32,19 @@ export function isValidHex(color: string): boolean {
   return /^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(color.trim());
 }
 
+/**
+ * A translucent (~13 %) version of a stored tag colour for badge backgrounds.
+ * Appending an alpha byte only works on #RRGGBB, yet #RGB and #RRGGBBAA are
+ * valid stored values too — expand the short form and drop an existing alpha
+ * first, or the badge gets an invalid colour and loses its tint entirely.
+ */
+export function tintOf(color: string, alphaHex = "22"): string {
+  const c = color.trim().slice(1);
+  const rgb =
+    c.length === 3 ? c.split("").map((ch) => ch + ch).join("") : c.slice(0, 6);
+  return `#${rgb}${alphaHex}`;
+}
+
 /** Normalize/validate a hex color (matches the legacy schema: #RGB, #RRGGBB, #RRGGBBAA). */
 function normalizeColor(color?: string | null): string | null {
   if (color == null) return null;

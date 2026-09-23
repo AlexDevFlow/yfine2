@@ -75,6 +75,10 @@ async function validateSourceCurrency(
   if (!s) throw new DomainError("not_found");
   if (s.currency.toUpperCase() !== currency.trim().toUpperCase())
     throw new DomainError("currency_mismatch");
+  // A fund's balance only moves through the savings/goals flows (each keeps a
+  // contribution record); a rule booking plain movements there would make the
+  // fund balance and "total saved" drift apart every month.
+  if (s.is_savings_fund === 1) throw new DomainError("fund_transfer_not_allowed");
 }
 
 export interface NewRecurring {
@@ -240,10 +244,14 @@ export async function updateRecurring(db: SqlExecutor, id: number, patch: Recurr
   if (patch.alert_if_insufficient !== undefined)
     set("alert_if_insufficient", patch.alert_if_insufficient ? 1 : 0);
 
-  // start_date + backdate-protected next_due_date re-sync
+  // start_date + backdate-protected next_due_date re-sync. Only a CHANGED start
+  // date re-anchors the schedule: the edit form always sends start_date, and a
+  // rule made from a past movement (next_due_date rolled past today, never
+  // fired) would otherwise snap back to that old date on a plain amount edit
+  // and back-fill every missed occurrence on the next tick.
   if (patch.start_date !== undefined) {
     set("start_date", patch.start_date);
-    if (cur.last_fired_date == null || patch.start_date > cur.next_due_date) {
+    if (patch.start_date !== cur.start_date && (cur.last_fired_date == null || patch.start_date > cur.next_due_date)) {
       set("next_due_date", patch.start_date);
     }
   }
@@ -396,6 +404,8 @@ export async function processDueRecurring(db: SqlExecutor, today: string): Promi
 export interface EnrichedRecurring extends RecurringRow {
   source_name: string | null;
   days_until: number;
+  /** True when the rule can never fire again (see isRuleActive). */
+  ended: boolean;
 }
 
 export async function listRecurring(db: SqlExecutor, today: string): Promise<EnrichedRecurring[]> {
@@ -403,7 +413,7 @@ export async function listRecurring(db: SqlExecutor, today: string): Promise<Enr
     `SELECT r.*, s.name AS source_name FROM recurring_items r LEFT JOIN sources s ON r.source_id = s.id
      ORDER BY r.next_due_date ASC`,
   );
-  return rows.map((r) => ({ ...r, days_until: daysBetween(today, r.next_due_date) }));
+  return rows.map((r) => ({ ...r, days_until: daysBetween(today, r.next_due_date), ended: !isRuleActive(r, today) }));
 }
 
 /** Occurrences per month by frequency (365.25-day year), shared with the exports. */
@@ -421,11 +431,13 @@ export interface MonthlySummary {
 
 /**
  * Monthly-equivalent inflow/outflow of the rules that are still running. A
- * rule past its end date will never fire again, so it must not keep inflating
- * "Monthly outflow" (nor the export's summary, which shares this filter).
+ * rule past its end date — or whose next occurrence already falls beyond it —
+ * will never fire again (the scheduler skips it, applying it throws
+ * recurring_ended), so it must not keep inflating "Monthly outflow" (nor the
+ * export's summary, which shares this filter).
  */
-export function isRuleActive(item: Pick<RecurringRow, "end_date">, today: string): boolean {
-  return !item.end_date || item.end_date >= today;
+export function isRuleActive(item: Pick<RecurringRow, "end_date" | "next_due_date">, today: string): boolean {
+  return !item.end_date || (item.end_date >= today && item.next_due_date <= item.end_date);
 }
 
 export async function monthlySummary(db: SqlExecutor, today: string = todayISO()): Promise<MonthlySummary> {

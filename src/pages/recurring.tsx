@@ -29,7 +29,9 @@ const recurringRouteApi = getRouteApi("/recurring");
 const FREQUENCIES = ["daily", "weekly", "monthly", "yearly"] as const;
 
 /** Rich "next due" label + tone, faithful to og: overdue / today / tomorrow / in N days. */
-function dueLabel(daysUntil: number, t: (k: string, o?: Record<string, unknown>) => string): { text: string; tone: string } {
+function dueLabel(daysUntil: number, t: (k: string, o?: Record<string, unknown>) => string, ended = false): { text: string; tone: string } {
+  // A rule that can never fire again is finished, not late.
+  if (ended) return { text: t("recurring_ended_label", { defaultValue: "Ended" }), tone: "text-muted-2" };
   if (daysUntil < 0) return { text: t("overdue", { defaultValue: "Overdue by {{n}} days", n: -daysUntil }), tone: "text-negative font-semibold" };
   if (daysUntil === 0) return { text: t("due_today", { defaultValue: "Due today" }), tone: "text-warning font-semibold" };
   if (daysUntil === 1) return { text: t("due_tomorrow", { defaultValue: "Due tomorrow" }), tone: "text-warning" };
@@ -122,7 +124,11 @@ export function RecurringForm({
       <Field label={t("source", { defaultValue: "Source" })} htmlFor="rc-src">
         <Select id="rc-src" value={sourceId} onChange={(e) => setSourceId(e.target.value)}>
           <option value="">{t("external", { defaultValue: "External (no account)" })}</option>
-          {sources.map((s) => <option key={s.id} value={s.id}>{s.name} · {s.currency}</option>)}
+          {/* Funds only move through the savings/goals flows (the repo rejects them
+              too); keep a fund already on a legacy rule listed so the edit still shows it. */}
+          {sources
+            .filter((s) => s.is_savings_fund === 0 || s.id === initial?.source_id)
+            .map((s) => <option key={s.id} value={s.id}>{s.name} · {s.currency}</option>)}
         </Select>
       </Field>
       {!selectedSource && (
@@ -375,7 +381,7 @@ export function RecurringPage() {
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {items.map((r) => {
-          const due = dueLabel(r.days_until, t);
+          const due = dueLabel(r.days_until, t, r.ended);
           return (
             <Card key={r.id} className="relative flex h-full flex-col overflow-hidden">
               {/* Color accent stripe — green for income, red for expense (og parity). */}
@@ -407,7 +413,7 @@ export function RecurringPage() {
                 </div>
 
                 <div className="mt-auto flex items-center gap-1 pt-3">
-                  <Button size="sm" variant="outline" className="flex-1" onClick={() => { setApplyError(undefined); setApplying(r); }} title={t("apply_now", { defaultValue: "Apply now" })}>
+                  <Button size="sm" variant="outline" className="flex-1" disabled={r.ended} onClick={() => { setApplyError(undefined); setApplying(r); }} title={t("apply_now", { defaultValue: "Apply now" })}>
                     <CheckCircle2 className="h-4 w-4" /> {t("apply_now", { defaultValue: "Apply now" })}
                   </Button>
                   <button onClick={() => { setFormError(undefined); setModal({ open: true, editing: r }); }} aria-label={t("edit", { defaultValue: "Edit" })} title={t("edit", { defaultValue: "Edit" })} className="rounded-md p-2 text-muted hover:bg-surface-2 hover:text-foreground">
