@@ -199,6 +199,7 @@
   "income_this_month": "Дохід цього місяця",
   "expenses_this_month": "Витрати цього місяця",
   "of_which_external": "з яких зовнішні",
+  "plus_external": "плюс зовнішні",
   "exclude_from_stats": "Виключити зі статистики",
   "include_in_stats": "Включити до статистики",
   "statistics": "Статистика",

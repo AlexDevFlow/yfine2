@@ -199,6 +199,7 @@
   "income_this_month": "Income this month",
   "expenses_this_month": "Expenses this month",
   "of_which_external": "of which external",
+  "plus_external": "plus external",
   "exclude_from_stats": "Exclude from stats",
   "include_in_stats": "Include in stats",
   "statistics": "Statistics",

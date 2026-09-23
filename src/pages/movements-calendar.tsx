@@ -23,12 +23,20 @@ export function MovementsCalendar({ onClose, locale }: { onClose: () => void; lo
   const last = `${month}-${String(daysInMonth(yy, mm)).padStart(2, "0")}`;
   const { data } = useMovements({ dateFrom: first, dateTo: last, excludeTransferIn: true }, 1000);
 
+  // A transfer moves money between the user's own accounts and an excluded row
+  // is out of the stats by request: neither is income or spending, so neither
+  // moves a day's net (same rule as the dashboard's monthly flow).
+  const counts = (mv: EnrichedMovement) => mv.transfer_pair_id == null && mv.exclude_from_stats !== 1;
   const byDay = useMemo(() => {
-    const m = new Map<string, { count: number; net: number; items: EnrichedMovement[] }>();
+    const m = new Map<string, { count: number; nets: Map<string, number>; items: EnrichedMovement[] }>();
     for (const mv of data?.items ?? []) {
-      const e = m.get(mv.date) ?? { count: 0, net: 0, items: [] };
+      const e = m.get(mv.date) ?? { count: 0, nets: new Map<string, number>(), items: [] as EnrichedMovement[] };
       e.count += 1;
-      e.net += mv.direction === "in" ? mv.amount : -mv.amount;
+      if (counts(mv)) {
+        // Per currency — €100 in and $150 out is not "−50 of anything".
+        const c = mv.source_currency ?? "";
+        e.nets.set(c, (e.nets.get(c) ?? 0) + (mv.direction === "in" ? mv.amount : -mv.amount));
+      }
       e.items.push(mv);
       m.set(mv.date, e);
     }
@@ -78,7 +86,7 @@ export function MovementsCalendar({ onClose, locale }: { onClose: () => void; lo
               >
                 <span className={cn(info && "font-medium text-foreground")}>{dayNum}</span>
                 {info && (
-                  <span className={cn("mt-0.5 h-1.5 w-1.5 rounded-full", info.net >= 0 ? "bg-positive" : "bg-negative")} />
+                  <span className={cn("mt-0.5 h-1.5 w-1.5 rounded-full", [...info.nets.values()].some((v) => v < 0) ? "bg-negative" : "bg-positive")} />
                 )}
               </button>
             );
@@ -92,21 +100,19 @@ export function MovementsCalendar({ onClose, locale }: { onClose: () => void; lo
               {sel.items.map((m) => (
                 <li key={m.id} className="flex items-center justify-between gap-3 py-2 text-sm">
                   <span className="min-w-0 truncate text-foreground">{m.note || m.source_name || t("movement", { defaultValue: "Movement" })}</span>
-                  <span className={cn("num shrink-0 font-semibold", m.direction === "in" ? "text-positive" : "text-foreground")}>
-                    {m.source_currency ? formatSigned(m.direction === "in" ? m.amount : -m.amount, m.source_currency, locale) : m.amount.toFixed(2)}
+                  <span className={cn("num shrink-0 font-semibold", m.transfer_pair_id != null ? "text-muted" : m.direction === "in" ? "text-positive" : "text-foreground")}>
+                    {m.transfer_pair_id != null
+                      ? (m.source_currency ? formatMoney(m.amount, m.source_currency, locale) : m.amount.toFixed(2))
+                      : m.source_currency
+                        ? formatSigned(m.direction === "in" ? m.amount : -m.amount, m.source_currency, locale)
+                        : `${m.direction === "in" ? "+" : "−"}${m.amount.toFixed(2)}`}
                   </span>
                 </li>
               ))}
             </ul>
             {(() => {
-              // Net must be computed PER CURRENCY — summing mixed-currency amounts
-              // and labelling the total with the first row's currency is meaningless.
-              const nets = new Map<string, number>();
-              for (const m of sel.items) {
-                const c = m.source_currency ?? "";
-                nets.set(c, (nets.get(c) ?? 0) + (m.direction === "in" ? m.amount : -m.amount));
-              }
-              return [...nets.entries()].map(([c, v]) => (
+              // Net per currency, transfers and excluded rows left out (see byDay).
+              return [...sel.nets.entries()].map(([c, v]) => (
                 <p key={c || "—"} className="mt-1 text-right text-xs text-muted">
                   {t("net", { defaultValue: "Net" })}: <span className={cn("num", v >= 0 ? "text-positive" : "text-negative")}>{c ? formatMoney(v, c, locale) : v.toFixed(2)}</span>
                 </p>

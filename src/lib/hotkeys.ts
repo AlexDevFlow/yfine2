@@ -60,6 +60,8 @@ const PASSTHROUGH_KEYS = ["a", "c", "v", "x", "z", "y", "f"];
 
 export interface KeyEventLike {
   key: string;
+  /** Physical key (e.g. "KeyT"); used so Option/Alt letter combos survive macOS dead-key output. */
+  code?: string;
   ctrlKey?: boolean;
   altKey?: boolean;
   shiftKey?: boolean;
@@ -68,23 +70,29 @@ export interface KeyEventLike {
 
 /**
  * Normalize a keyboard event into a binding string, e.g. "Alt+t",
- * "Ctrl+Shift+k", "g", "/". Identical semantics to the original _normalizeKey.
+ * "Ctrl+Shift+k", "g", "/". Same semantics as the original _normalizeKey, with
+ * two layout fixes:
+ *  - with Alt/Ctrl/Meta held, a letter is taken from the PHYSICAL key when
+ *    the layout turned it into a symbol (macOS Option+T types "†", which could
+ *    never match "Alt+t");
+ *  - Shift is only recorded for letters and non-printable keys. A symbol that
+ *    needs Shift on the user's layout ("/" is Shift+7 on Italian and Spanish
+ *    keyboards) is just that symbol, so the default "/" search shortcut works.
  */
 export function normalizeKey(e: KeyEventLike): string {
   const parts: string[] = [];
   if (e.ctrlKey) parts.push("Ctrl");
   if (e.altKey) parts.push("Alt");
-  // Shift is only added here for non-printable keys; printable Shift+letter is
-  // handled below so "Ctrl+Shift+K" matches a binding of the same shape.
-  if (e.shiftKey && e.key.length !== 1) parts.push("Shift");
   if (e.metaKey) parts.push("Meta");
   let k = e.key;
-  if (e.shiftKey && k.length === 1) {
-    parts.push("Shift");
-    k = k.toLowerCase();
-  } else if (k.length === 1) {
-    k = k.toLowerCase();
+  const physical = /^Key([A-Z])$/.exec(e.code ?? "");
+  if ((e.altKey || e.ctrlKey || e.metaKey) && physical && !/^[a-z]$/i.test(k)) {
+    k = physical[1];
   }
+  const printable = k.length === 1;
+  const letter = printable && /[a-z]/i.test(k);
+  if (e.shiftKey && (!printable || letter)) parts.push("Shift");
+  if (printable) k = k.toLowerCase();
   parts.push(k);
   return parts.join("+");
 }

@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Modal } from "@/components/ui/modal";
 import { useToast } from "@/components/ui/toast";
 import { MultiLineChart, SERIES_COLORS, type Series } from "@/components/ui/multi-line-chart";
+import { sliceWindow } from "@/components/ui/range-chart";
 import { Slot, SlotMoney } from "@/components/ui/slot";
 import { DashboardSkeleton } from "@/components/dashboard-skeleton";
 import { ForecastSummary } from "@/components/forecast-card";
@@ -180,9 +181,11 @@ function Stat({
       <div className="min-w-0">
         <p className="text-xs text-muted">{label}</p>
         <SlotMoney value={raw} text={hidden ? MASK : value} rollOnMount className="num text-base font-semibold text-foreground" />
+        {/* Movements with no account carry no currency, so they are NOT part of
+            the figure above (which is one currency): say "plus", not "of which". */}
         {external && !hidden && (
           <p className="text-[11px] text-muted-2">
-            ({t("of_which_external", { defaultValue: "of which external" })} {externalSign}
+            ({t("plus_external", { defaultValue: "plus external" })} {externalSign}
             {external})
           </p>
         )}
@@ -499,12 +502,7 @@ export function Dashboard() {
     const all = historyAll.data ?? [];
     const days = RANGES.find((r) => r.key === range)!.days;
     return all.map((s, i) => {
-      let points = s.points;
-      if (days !== Infinity) {
-        const cut = cutoffISO(days);
-        const f = s.points.filter((p) => p.date >= cut);
-        points = f.length >= 2 ? f : s.points;
-      }
+      const points = days === Infinity ? s.points : sliceWindow(s.points, cutoffISO(days));
       return { label: s.currency, color: SERIES_COLORS[i % SERIES_COLORS.length], points };
     });
   }, [historyAll.data, range]);
@@ -652,7 +650,7 @@ export function Dashboard() {
                     hidden={hidden}
                     icon={ArrowUpRight}
                     onClick={() => setMonthModal("in")}
-                    external={data.flow.externalIncome > 0 ? fmtMoney(data.flow.externalIncome) : undefined}
+                    external={data.flow.externalIncome > 0 ? data.flow.externalIncome.toFixed(2) : undefined}
                     externalSign="+"
                   />
                   <Stat
@@ -663,7 +661,7 @@ export function Dashboard() {
                     hidden={hidden}
                     icon={ArrowDownLeft}
                     onClick={() => setMonthModal("out")}
-                    external={data.flow.externalExpense > 0 ? fmtMoney(data.flow.externalExpense) : undefined}
+                    external={data.flow.externalExpense > 0 ? data.flow.externalExpense.toFixed(2) : undefined}
                     externalSign="−"
                   />
                   <Stat label={t("saved", { defaultValue: "Saved" })} raw={view.saved} value={fmtMoney(view.saved)} tone="primary" hidden={hidden} icon={PiggyBank} />

@@ -169,9 +169,12 @@ async function buildSection(db: SqlExecutor, key: SectionKey, sourceCache: () =>
       const nw = netWorthByCurrency(
         list.map((s) => ({ currency: s.currency, balance: balances.get(s.id) ?? s.starting_balance })),
       );
+      // Cash only, every account: a different figure from the Overview's net
+      // worth (which adds portfolios and honours exclusions) — label it as such
+      // so the same file never shows two "Net Worth (EUR)" values.
       return {
         title: "Sources",
-        summary: Object.keys(nw).sort().map((ccy) => [`Net Worth (${ccy})`, round2(nw[ccy])] as [string, number]),
+        summary: Object.keys(nw).sort().map((ccy) => [`Cash (${ccy})`, round2(nw[ccy])] as [string, number]),
         columns: ["Name", "Currency", "Balance", "Starting", "Yield %", "Fund"],
         rows: list.map((s) => [s.name, s.currency, balances.get(s.id) ?? s.starting_balance, s.starting_balance, s.yield_rate, s.is_savings_fund ? "yes" : ""]),
       };

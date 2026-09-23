@@ -26,6 +26,25 @@ export const PORTFOLIO_RANGES: Range[] = [
 ];
 
 /** `days` ago in the LOCAL calendar (movement/snapshot dates are local days). */
+/**
+ * The points of a step series that fall inside a window starting at `cut`,
+ * led by the value the series carried INTO the window (re-dated to the cutoff)
+ * so a quiet stretch draws as the flat line it was. Falling back to the whole
+ * history when few points land in the window — the old behaviour — showed
+ * years of data under a "30d" label. Only a series with nothing at all before
+ * or inside the window is returned as-is.
+ */
+export function sliceWindow<P extends { date: string }>(points: readonly P[], cut: string): P[] {
+  const inside = points.filter((p) => p.date >= cut);
+  let carried: P | undefined;
+  for (const p of points) {
+    if (p.date < cut) carried = p;
+    else break;
+  }
+  if (!carried) return inside.length > 0 ? inside : [...points];
+  return [{ ...carried, date: cut }, ...inside];
+}
+
 function cutoffISO(days: number): string {
   return addDaysISO(todayISO(), -days);
 }
@@ -58,9 +77,7 @@ export function RangeChart({
   const series = useMemo(() => {
     const days = (ranges.find((r) => r.key === range) ?? ranges[ranges.length - 1]).days;
     if (days === Infinity) return points;
-    const cut = cutoffISO(days);
-    const f = points.filter((p) => p.date >= cut);
-    return f.length >= 2 ? f : points;
+    return sliceWindow(points, cutoffISO(days));
   }, [points, range, ranges]);
 
   return (

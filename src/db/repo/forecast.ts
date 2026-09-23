@@ -85,6 +85,13 @@ export async function forecastCashflow(
     // Same anchoring as the scheduler, so the projected dates are the ones the
     // rule will actually fire on (a bill on the 31st stays on the 31st).
     const anchor = anchorDayOf(it);
+    // An occurrence still sitting in the past is an unpaid, overdue bill (auto
+    // rules are advanced by the scheduler, so only confirm-mode ones get here).
+    // The dashboard lists it as overdue; the projection places it today rather
+    // than pretending it will never be paid.
+    if (d < today && !(it.end_date && d > it.end_date)) {
+      events.push({ date: today, currency: ccy, delta: it.direction === "in" ? it.amount : -it.amount, label: it.name });
+    }
     let ff = 0;
     while (d < today && ff < 100_000) {
       if (it.end_date && d > it.end_date) break;
@@ -115,10 +122,16 @@ export async function forecastCashflow(
     // flagged even if no future event ever pushes it negative.
     let negativeFrom: string | null = start < 0 ? today : null;
     const points: ForecastPoint[] = [{ date: today, balance: round2(running) }];
-    for (const ev of events) {
-      if (ev.currency !== currency) continue;
+    const evs = events.filter((ev) => ev.currency === currency);
+    for (let i = 0; i < evs.length; i++) {
+      const ev = evs[i];
       running = round2(running + ev.delta);
       points.push({ date: ev.date, balance: running, label: ev.label });
+      // Judge the balance at the END of each day: rent and salary due on the
+      // same 1st must not flag "goes negative" just because rent happened to
+      // be stored first.
+      const dayDone = i === evs.length - 1 || evs[i + 1].date !== ev.date;
+      if (!dayDone) continue;
       if (running < lowest) lowest = running;
       if (running < 0 && !negativeFrom) negativeFrom = ev.date;
     }

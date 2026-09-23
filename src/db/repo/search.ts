@@ -64,9 +64,10 @@ export async function searchAll(
     direction: "in" | "out";
     date: string;
     source_name: string | null;
+    currency: string | null;
     transfer_pair_id: number | null;
   }>(
-    `SELECT m.id, m.note, m.amount, m.direction, m.date, m.transfer_pair_id, s.name AS source_name
+    `SELECT m.id, m.note, m.amount, m.direction, m.date, m.transfer_pair_id, s.name AS source_name, s.currency AS currency
      FROM movements m LEFT JOIN sources s ON m.source_id = s.id
      WHERE m.note LIKE ? ESCAPE '\\'${amountMatch ? " OR m.amount = ?" : ""}
      ORDER BY m.date DESC, m.id DESC LIMIT ?`,
@@ -80,6 +81,7 @@ export async function searchAll(
       label: m.note || `${m.direction === "in" ? "+" : "−"}${m.amount.toFixed(2)}`,
       sublabel: `${m.source_name ?? "External"} · ${m.date}`,
       amount: m.amount,
+      currency: m.currency ?? undefined,
       direction: m.direction,
       date: m.date,
       source: m.source_name,

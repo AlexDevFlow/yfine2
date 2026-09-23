@@ -124,10 +124,14 @@ export interface DashboardCounts {
   sourceCount: number;
 }
 
-/** Aggregate movement + source counts for the dashboard (services/dashboard.py:37-38). */
+/**
+ * Aggregate movement + source counts for the dashboard (services/dashboard.py:37-38).
+ * A transfer is ONE movement to the user (the list shows one row per transfer),
+ * so its incoming leg is not counted twice.
+ */
 export async function counts(db: SqlExecutor): Promise<DashboardCounts> {
   const rows = await db.select<{ movements: number; sources: number }>(
-    `SELECT (SELECT COUNT(*) FROM movements) AS movements,
+    `SELECT (SELECT COUNT(*) FROM movements WHERE NOT (transfer_pair_id IS NOT NULL AND direction = 'in')) AS movements,
             (SELECT COUNT(*) FROM sources) AS sources`,
   );
   return { movementCount: rows[0]?.movements ?? 0, sourceCount: rows[0]?.sources ?? 0 };

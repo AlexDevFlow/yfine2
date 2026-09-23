@@ -41,6 +41,7 @@ export async function netWorthHistory(
   db: SqlExecutor,
   currency: string,
   excludedSourceIds: number[] = [],
+  today: string = todayISO(),
 ): Promise<HistoryPoint[]> {
   // Accounts the user left out of net worth must drop out of its history too,
   // or the chart contradicts the number printed above it. Ids come from settings
@@ -61,8 +62,12 @@ export async function netWorthHistory(
     [currency],
   );
   const series = cumulative(start, deltas);
+  // A currency whose accounts only hold a starting balance still HAS a net
+  // worth: return it as today's single point rather than an empty series the
+  // multi-currency chart would otherwise draw as a flat 0.
+  if (series.length === 0) return [{ date: today, value: round2(start) }];
   // Lead with the opening balance so a flat start is visible.
-  if (series.length && start !== series[0].value) {
+  if (start !== series[0].value) {
     series.unshift({ date: series[0].date, value: round2(start) });
   }
   return series;
@@ -87,9 +92,10 @@ export async function netWorthHistoryAll(
   const currencyRows = await db.select<{ currency: string }>(
     `SELECT DISTINCT currency FROM sources s${skip.length > 0 ? ` WHERE s.id NOT IN (${skip.join(",")})` : ""} ORDER BY currency`,
   );
+  const today = todayISO();
   const raw: CurrencySeries[] = [];
   for (const { currency } of currencyRows) {
-    raw.push({ currency, points: await netWorthHistory(db, currency, excludedSourceIds) });
+    raw.push({ currency, points: await netWorthHistory(db, currency, excludedSourceIds, today) });
   }
   if (raw.length === 0) return [];
 

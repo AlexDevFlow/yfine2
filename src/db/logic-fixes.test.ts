@@ -852,3 +852,80 @@ describe("sources, goals and whims validate their inputs at the boundary", () =>
     await expect(whims.createWhim(db, { name: "", amount: 5, currency: "EUR" })).rejects.toMatchObject({ code: "invalid_name" });
   });
 });
+
+describe("dashboard charts and forecast", () => {
+  it("a currency with a starting balance but no movements has a history point, not a flat 0", async () => {
+    const { db } = await makeMemDb();
+    const eur = await sources.createSource(db, { name: "EUR", currency: "EUR", starting_balance: 0 });
+    await sources.createSource(db, { name: "USD", currency: "USD", starting_balance: 5000 });
+    await addMovement(db, eur.id, "in", 100, "2026-01-10");
+    const { netWorthHistoryAll } = await import("./repo/history");
+    const all = await netWorthHistoryAll(db);
+    const usd = all.find((s) => s.currency === "USD")!;
+    expect(usd.points.length).toBeGreaterThan(0);
+    expect(usd.points.every((p) => p.value === 5000)).toBe(true);
+  });
+
+  it("a range window keeps the value carried into it instead of falling back to the whole history", async () => {
+    const { sliceWindow } = await import("@/components/ui/range-chart");
+    const pts = [{ date: "2024-01-01", value: 10 }, { date: "2025-06-01", value: 20 }];
+    // Nothing inside the last 30 days: one point at the cutoff carrying 20.
+    expect(sliceWindow(pts, "2026-08-24")).toEqual([{ date: "2026-08-24", value: 20 }]);
+    // One point inside: the carried value leads it.
+    const withRecent = [...pts, { date: "2026-09-01", value: 25 }];
+    expect(sliceWindow(withRecent, "2026-08-24")).toEqual([{ date: "2026-08-24", value: 20 }, { date: "2026-09-01", value: 25 }]);
+    // No history before the cutoff at all: whatever is inside (or everything when empty).
+    expect(sliceWindow([{ date: "2026-09-01", value: 1 }], "2026-08-24")).toEqual([{ date: "2026-09-01", value: 1 }]);
+    expect(sliceWindow(pts, "2020-01-01")).toEqual(pts);
+  });
+
+  it("forecast judges the balance at the end of each day and places overdue bills today", async () => {
+    const { db } = await makeMemDb();
+    const acct = await sources.createSource(db, { name: "A", currency: "EUR", starting_balance: 200 });
+    await recurring.createRecurring(db, { name: "Rent", amount: 1000, direction: "out", currency: "EUR", frequency: "monthly", start_date: "2026-10-01", source_id: acct.id });
+    await recurring.createRecurring(db, { name: "Salary", amount: 2000, direction: "in", currency: "EUR", frequency: "monthly", start_date: "2026-10-01", source_id: acct.id });
+    const fc = await forecastCashflow(db, 30, "2026-09-23");
+    const eur = fc.find((f) => f.currency === "EUR")!;
+    expect(eur.negativeFrom).toBeNull();
+    expect(eur.lowest).toBe(200);
+    expect(eur.end).toBe(1200);
+
+    // A confirm-mode bill left unapplied since last week is still owed: it lands today.
+    await recurring.createRecurring(db, { name: "Gym", amount: 50, direction: "out", currency: "EUR", frequency: "monthly", start_date: "2026-09-15", source_id: acct.id, apply_mode: "confirm" });
+    const fc2 = await forecastCashflow(db, 30, "2026-09-23");
+    const eur2 = fc2.find((f) => f.currency === "EUR")!;
+    expect(eur2.points.find((p) => p.label === "Gym")?.date).toBe("2026-09-23");
+    expect(eur2.end).toBe(1100); // today's overdue 50 + the 15 Oct occurrence
+  });
+
+  it("counts a transfer once", async () => {
+    const { db } = await makeMemDb();
+    const a = await sources.createSource(db, { name: "A", currency: "EUR", starting_balance: 100 });
+    const b = await sources.createSource(db, { name: "B", currency: "EUR", starting_balance: 0 });
+    await movements.createTransfer(db, { fromSourceId: a.id, toSourceId: b.id, amount: 10, date: "2026-05-01" });
+    await addMovement(db, a.id, "out", 5, "2026-05-02");
+    const { counts } = await import("./repo/dashboard");
+    expect((await counts(db)).movementCount).toBe(2);
+  });
+
+  it("search results carry the movement's currency", async () => {
+    const { db } = await makeMemDb();
+    const a = await sources.createSource(db, { name: "A", currency: "EUR", starting_balance: 100 });
+    await movements.createMovement(db, { source_id: a.id, amount: 12, direction: "out", date: "2026-05-02", note: "coffee beans" });
+    const { searchAll } = await import("./repo/search");
+    const hit = (await searchAll(db, "coffee")).find((r) => r.type === "movement")!;
+    expect(hit.currency).toBe("EUR");
+  });
+});
+
+describe("hotkeys survive keyboard layouts", () => {
+  it("reads Alt+letter from the physical key and ignores Shift on symbols", async () => {
+    const { normalizeKey } = await import("@/lib/hotkeys");
+    expect(normalizeKey({ key: "†", code: "KeyT", altKey: true })).toBe("Alt+t"); // macOS Option+T
+    expect(normalizeKey({ key: "/", code: "Digit7", shiftKey: true })).toBe("/"); // IT/ES layouts
+    expect(normalizeKey({ key: "?", shiftKey: true })).toBe("?");
+    expect(normalizeKey({ key: "K", ctrlKey: true, shiftKey: true })).toBe("Ctrl+Shift+k");
+    expect(normalizeKey({ key: "t", altKey: true })).toBe("Alt+t");
+    expect(normalizeKey({ key: "Enter", shiftKey: true })).toBe("Shift+Enter");
+  });
+});
