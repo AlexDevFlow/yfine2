@@ -123,6 +123,18 @@ export function parseAmount(input: string, decimalSep = "."): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/**
+ * True when y-m-d is a real calendar day. A bare 1..31 range check lets
+ * "2024-02-31" through, which then sits in the DB as a date no month has (and
+ * sorts/filters/charts as if it existed).
+ */
+export function isValidCalendarDate(y: number, m: number, d: number): boolean {
+  if (!Number.isInteger(y) || !Number.isInteger(m) || !Number.isInteger(d)) return false;
+  if (m < 1 || m > 12 || d < 1 || d > 31) return false;
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
+}
+
 /** Minimal Python-strptime subset for the codes used by presets (%Y %m %d %H %M %S). */
 function strptime(s: string, fmt: string): string | null {
   const tokens: string[] = [];
@@ -142,7 +154,7 @@ function strptime(s: string, fmt: string): string | null {
   const part: Record<string, number> = {};
   tokens.forEach((tk, idx) => (part[tk] = Number(m[idx + 1])));
   const y = part.Y, mo = part.m, d = part.d;
-  if (!y || !mo || !d || mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+  if (!y || !mo || !d || !isValidCalendarDate(y, mo, d)) return null;
   return `${y}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
 }
 
@@ -156,10 +168,10 @@ const MONTHS: Record<string, number> = {
 
 function iso(y: number, m: number, d: number): string | null {
   if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return null;
-  if (m < 1 || m > 12 || d < 1 || d > 31) return null;
   // pivot 2-digit years like dateutil: <70 → 2000s, else 1900s
   if (y < 100) y = y < 70 ? 2000 + y : 1900 + y;
   if (y < 1 || y > 9999) return null;
+  if (!isValidCalendarDate(y, m, d)) return null;
   return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
 }
 

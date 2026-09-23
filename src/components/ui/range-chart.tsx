@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { LineChart, type ChartPoint } from "@/components/ui/line-chart";
 import { cn } from "@/lib/cn";
+import { addDaysISO, todayISO } from "@/lib/date";
 
 export interface Range {
   key: string;
@@ -24,10 +25,9 @@ export const PORTFOLIO_RANGES: Range[] = [
   { key: "1y", days: 365 },
 ];
 
+/** `days` ago in the LOCAL calendar (movement/snapshot dates are local days). */
 function cutoffISO(days: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() - days);
-  return d.toISOString().slice(0, 10);
+  return addDaysISO(todayISO(), -days);
 }
 
 /** LineChart with range buttons and client-side slicing. */

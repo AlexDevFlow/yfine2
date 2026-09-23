@@ -43,6 +43,9 @@ const MESSAGES: Record<DomainErrorCode, string> = {
   attachment_unsupported: "Unsupported file type. Allowed: PNG, JPEG, WebP, HEIC, PDF.",
   cannot_make_transfer_recurring: "Transfers can't be made recurring.",
   no_currency: "Set a base currency in Settings to make this recurring.",
+  fund_currency_locked: "A savings fund's currency can't be changed — it is the fund for that currency.",
+  active_goal_blocks_currency_change: "An active goal saves into this account in its current currency — close or delete it first.",
+  linked_goal_currency_locked: "This whim has an active savings goal in its current currency — close or delete the goal first.",
 };
 
 /** Maps a thrown DomainError (or any error) to a localized, human message. */

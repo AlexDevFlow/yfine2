@@ -43,7 +43,10 @@ export type DomainErrorCode =
   | "attachment_empty"
   | "attachment_unsupported"
   | "cannot_make_transfer_recurring"
-  | "no_currency";
+  | "no_currency"
+  | "fund_currency_locked"
+  | "active_goal_blocks_currency_change"
+  | "linked_goal_currency_locked";
 
 export class DomainError extends Error {
   code: DomainErrorCode;

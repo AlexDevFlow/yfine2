@@ -62,6 +62,13 @@ export async function updateWhim(db: SqlExecutor, id: number, patch: WhimPatch):
   const w = await getWhim(db, id);
   if (!w) throw new DomainError("not_found");
   if (patch.amount !== undefined && !(patch.amount > 0)) throw new DomainError("invalid_amount");
+  if (patch.currency !== undefined && patch.currency.trim().toUpperCase() !== w.currency.toUpperCase() && w.linked_goal_id != null) {
+    // The linked goal was created in the whim's currency and its allocations
+    // live in that currency's fund; re-labelling the whim would leave purchase
+    // (which refunds the goal into the purchase source) comparing apples to oranges.
+    const g = await getGoal(db, w.linked_goal_id);
+    if (g && g.status === "active") throw new DomainError("linked_goal_currency_locked");
+  }
   const sets: string[] = [];
   const params: unknown[] = [];
   const set = (c: string, v: unknown) => (sets.push(`${c} = ?`), params.push(v));
@@ -142,7 +149,10 @@ export async function startSavingForWhim(db: SqlExecutor, id: number): Promise<n
   if (w.status !== "pending") throw new DomainError("not_pending");
   if (w.linked_goal_id != null) {
     const g = await getGoal(db, w.linked_goal_id);
-    if (g) return g.id; // already saving — no duplicate goal
+    // Only a still-ACTIVE goal counts as "already saving": a goal closed from
+    // the Goals page (refunded, allocations dropped) can't take allocations any
+    // more, so returning it would leave "Save for this" permanently dead.
+    if (g && g.status === "active") return g.id;
   }
   return createGoal(db, {
     name: w.name,

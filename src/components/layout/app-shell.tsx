@@ -20,7 +20,8 @@ import { HelpDrawer } from "@/components/help/help-drawer";
 import { usePreferences, useUpdatePreferences } from "@/db/queries";
 import { getDb } from "@/db/connection";
 import { hasUserData } from "@/db/repo/settings";
-import { maybeRefreshPrices, maybeRefreshRates } from "@/db/repo/scheduler";
+import { maybeRefreshPrices, maybeRefreshRates, runScheduler } from "@/db/repo/scheduler";
+import { todayISO } from "@/lib/date";
 import { changelogFor, releaseNotesAction, type ChangelogEntry } from "@/lib/changelog";
 import { currentVersion } from "@/lib/updater";
 import { applyUiScale } from "@/lib/ui-scale";
@@ -275,6 +276,16 @@ function FloatingBottomNav() {
 /** Gentle background tick for the opt-in live price refresh. */
 const PRICE_REFRESH_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
 
+/**
+ * Local-only reconciliation tick (recurring rules, yield accrual, budget
+ * alerts). Boot runs it once; an app left open overnight would otherwise never
+ * post the bill that came due at midnight until the next restart. Everything
+ * it does is idempotent (last_fired_date / yield_last_date / last_alert_period),
+ * so the hourly cadence is about freshness, not correctness.
+ */
+const SCHEDULER_TICK_MS = 60 * 60 * 1000; // 1 hour
+const SCHEDULER_KEYS = ["movements", "sources", "dashboard", "budgets", "recurring", "forecast", "consolidated", "notifications", "history", "movementCounts", "goals", "savings"];
+
 export function AppShell() {
   const { t } = useTranslation();
   const [collapsed, setCollapsed] = useState(
@@ -329,6 +340,34 @@ export function AppShell() {
       window.clearInterval(id);
     };
   }, [pricesEnabled, qc]);
+
+  // Hourly local reconciliation while the app stays open (see SCHEDULER_TICK_MS).
+  // No network involved; the boot run already covered the first tick, so start
+  // with the interval rather than an immediate run. Money views refresh only
+  // when something was actually posted.
+  useEffect(() => {
+    let cancelled = false;
+    let lastDay = todayISO();
+    const tick = async () => {
+      try {
+        const db = await getDb();
+        const today = todayISO();
+        const res = await runScheduler(db, today);
+        const dayRolled = today !== lastDay;
+        lastDay = today;
+        if (!cancelled && (res.applied > 0 || res.credited > 0 || res.alerts > 0 || dayRolled)) {
+          for (const k of SCHEDULER_KEYS) void qc.invalidateQueries({ queryKey: [k] });
+        }
+      } catch {
+        /* never let a background tick surface to the UI */
+      }
+    };
+    const id = window.setInterval(tick, SCHEDULER_TICK_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [qc]);
 
   // Release notes: shown once, on the first launch after an update. A profile
   // that has never recorded a version (fresh install, or an app that predates

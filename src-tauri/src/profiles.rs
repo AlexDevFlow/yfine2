@@ -82,12 +82,35 @@ pub fn read_config(app: &tauri::AppHandle) -> Value {
             .and_then(|b| serde_json::from_slice::<Value>(&b).ok()),
     )
 }
+/// Atomic replace (unique tmp → fsync → rename): a torn `profiles.json` would
+/// be read back as "no config" and collapse the list to the default profile,
+/// hiding every other profile's data dir from the switcher.
 fn write_config(app: &tauri::AppHandle, cfg: &Value) -> Result<(), String> {
-    fs::write(
-        profiles_path(app)?,
-        serde_json::to_vec_pretty(cfg).map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| e.to_string())
+    use std::io::Write;
+    let target = profiles_path(app)?;
+    let bytes = serde_json::to_vec_pretty(cfg).map_err(|e| e.to_string())?;
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let tmp = target.with_file_name(format!("profiles.json.{}.{}.tmp", std::process::id(), nanos));
+    let write = (|| -> Result<(), String> {
+        let mut f = fs::File::create(&tmp).map_err(|e| e.to_string())?;
+        f.write_all(&bytes).map_err(|e| e.to_string())?;
+        f.sync_all().map_err(|e| e.to_string())?;
+        fs::rename(&tmp, &target).map_err(|e| e.to_string())
+    })();
+    if let Err(e) = write {
+        let _ = fs::remove_file(&tmp);
+        return Err(e);
+    }
+    #[cfg(unix)]
+    if let Some(dir) = target.parent() {
+        if let Ok(d) = fs::File::open(dir) {
+            let _ = d.sync_all();
+        }
+    }
+    Ok(())
 }
 
 /// The active profile's private data dir (created if missing). The default

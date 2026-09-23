@@ -7,7 +7,7 @@
 import type { SqlExecutor } from "../types";
 import { round2 } from "@/domain/money";
 import { addDaysISO } from "@/lib/date";
-import { computeNextDueDate } from "./recurring";
+import { anchorDayOf, computeNextDueDate } from "./recurring";
 import { getBalancesBatch, listSources } from "./sources";
 
 export interface ForecastPoint {
@@ -31,6 +31,7 @@ interface RecRow {
   direction: "in" | "out";
   frequency: string;
   next_due_date: string;
+  start_date: string;
   end_date: string | null;
   source_id: number | null;
 }
@@ -50,7 +51,7 @@ export async function forecastCashflow(
   }
 
   const horizonEnd = addDaysISO(today, horizonDays);
-  const items = await db.select<RecRow>(`SELECT id,name,amount,direction,frequency,next_due_date,end_date,source_id FROM recurring_items WHERE source_id IS NOT NULL`);
+  const items = await db.select<RecRow>(`SELECT id,name,amount,direction,frequency,next_due_date,start_date,end_date,source_id FROM recurring_items WHERE source_id IS NOT NULL`);
 
   const events: { date: string; currency: string; delta: number; label: string }[] = [];
   for (const it of items) {
@@ -61,10 +62,13 @@ export async function forecastCashflow(
     // A confirm-mode daily item the user never applies keeps next_due_date frozen in
     // the past; without this, the projection guard exhausts replaying old dates and the
     // item contributes zero future events (silently dropped from the forecast).
+    // Same anchoring as the scheduler, so the projected dates are the ones the
+    // rule will actually fire on (a bill on the 31st stays on the 31st).
+    const anchor = anchorDayOf(it);
     let ff = 0;
     while (d < today && ff < 100_000) {
       if (it.end_date && d > it.end_date) break;
-      const next = computeNextDueDate(d, it.frequency);
+      const next = computeNextDueDate(d, it.frequency, anchor);
       if (next <= d) break;
       d = next;
       ff += 1;
@@ -76,7 +80,7 @@ export async function forecastCashflow(
       if (d >= today) {
         events.push({ date: d, currency: ccy, delta: it.direction === "in" ? it.amount : -it.amount, label: it.name });
       }
-      const next = computeNextDueDate(d, it.frequency);
+      const next = computeNextDueDate(d, it.frequency, anchor);
       if (next <= d) break;
       d = next;
     }

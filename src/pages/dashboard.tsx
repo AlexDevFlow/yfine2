@@ -32,7 +32,7 @@ import {
 import { parseNetWorthExcluded } from "@/db/repo/settings";
 import { round2 } from "@/domain/money";
 import { cn } from "@/lib/cn";
-import { dayLabel, formatDate, monthLabel } from "@/lib/date";
+import { addDaysISO, dayLabel, formatDate, monthLabel, todayISO } from "@/lib/date";
 import { formatMoney, formatSigned } from "@/lib/format";
 import { useErrorText } from "@/lib/use-error-text";
 
@@ -128,10 +128,9 @@ const COMPARISON_RANGES = [
 ] as const;
 type CompRangeKey = (typeof COMPARISON_RANGES)[number]["key"];
 
+/** `days` ago in the LOCAL calendar — every movement date in the app is local. */
 function cutoffISO(days: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() - days);
-  return d.toISOString().slice(0, 10);
+  return addDaysISO(todayISO(), -days);
 }
 
 /** Day-relative badge for upcoming recurring items (invariant 14). */

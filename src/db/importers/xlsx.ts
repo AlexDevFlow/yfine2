@@ -12,7 +12,7 @@
  */
 import * as XLSX from "xlsx";
 import { round2 } from "@/domain/money";
-import { guessColumnMap, parseAmount, tryParseDate, type CsvOptions, type ParseResult, type ParsedMovement } from "./csv";
+import { guessColumnMap, isValidCalendarDate, parseAmount, tryParseDate, type CsvOptions, type ParseResult, type ParsedMovement } from "./csv";
 
 const MAX_ROWS = 100000;
 
@@ -43,7 +43,7 @@ function cellDate(value: unknown, dateFormat: string | undefined): string | null
     const parsed = XLSX.SSF?.parse_date_code?.(value);
     // Require a valid month/day too — a time-only/fractional serial yields m=0,d=0,
     // which would emit "YYYY-00-00" (the CSV/OFX paths both range-check this).
-    if (parsed && parsed.y && parsed.m >= 1 && parsed.m <= 12 && parsed.d >= 1 && parsed.d <= 31) {
+    if (parsed && parsed.y && isValidCalendarDate(parsed.y, parsed.m, parsed.d)) {
       return `${parsed.y}-${String(parsed.m).padStart(2, "0")}-${String(parsed.d).padStart(2, "0")}`;
     }
     return null;

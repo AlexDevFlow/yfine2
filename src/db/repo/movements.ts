@@ -235,9 +235,12 @@ export async function updateTransfer(db: SqlExecutor, outLegId: number, patch: T
     // Explicit null = "no converted amount": mirror 1:1, matching create
     // (transfers.ts falls back to the OUT amount when toAmount is absent).
     iset("amount", newAmount);
-  } else if (patch.amount !== undefined && sameCcy) {
-    // Partial patch without toAmount: amount edits mirror on same-currency pairs.
-    iset("amount", patch.amount);
+  } else if (sameCcy && inLeg.amount !== newAmount) {
+    // No toAmount in the patch and the pair is (now) same-currency: the IN leg
+    // must equal the OUT leg. This covers a plain amount edit AND a re-point of
+    // a formerly cross-currency pair onto same-currency accounts, where the old
+    // converted amount would otherwise survive and mint/destroy money.
+    iset("amount", newAmount);
   }
 
   oset("updated_at", now());
@@ -476,24 +479,28 @@ export async function countMovements(db: SqlExecutor, f: MovementFilters): Promi
 export async function sumMovements(
   db: SqlExecutor,
   f: MovementFilters,
-): Promise<{ totalIn: number; totalOut: number }> {
+): Promise<{ totalIn: number; totalOut: number; countedRows: number }> {
   const { where, params } = buildFilter(f);
   // Transfers AND stat-excluded rows stay out of the income/expense totals,
   // matching dashboard.monthlyFlow / monthlyComparison and budgets.actualFor.
   const extra = "m.transfer_pair_id IS NULL AND m.exclude_from_stats = 0";
   const cond = where ? `${where} AND ${extra}` : `WHERE ${extra}`;
-  const rows = await db.select<{ direction: "in" | "out"; s: number }>(
-    `SELECT m.direction AS direction, COALESCE(SUM(m.amount), 0) AS s
+  const rows = await db.select<{ direction: "in" | "out"; s: number; c: number }>(
+    `SELECT m.direction AS direction, COALESCE(SUM(m.amount), 0) AS s, COUNT(*) AS c
      FROM movements m ${cond} GROUP BY m.direction`,
     params,
   );
   let totalIn = 0;
   let totalOut = 0;
+  // Rows that actually went into the totals (transfers/excluded left out), so
+  // an "average per movement" divides the sum by the rows it was built from.
+  let countedRows = 0;
   for (const r of rows) {
     if (r.direction === "in") totalIn = r.s;
     else if (r.direction === "out") totalOut = r.s;
+    countedRows += r.c;
   }
-  return { totalIn, totalOut };
+  return { totalIn, totalOut, countedRows };
 }
 
 export async function listMovements(

@@ -770,7 +770,9 @@ export function MovementsPage() {
           totalIn={sums?.totalIn ?? 0}
           totalOut={sums?.totalOut ?? 0}
           count={sums?.count ?? 0}
-          avg={(sums?.count ?? 0) > 0 ? Math.round(((sums?.totalIn ?? 0) + (sums?.totalOut ?? 0)) / (sums!.count) * 100) / 100 : 0}
+          // Mean over the rows the totals were built from — transfers and
+          // stat-excluded rows are in `count` but not in the sums.
+          avg={(sums?.countedRows ?? 0) > 0 ? Math.round(((sums?.totalIn ?? 0) + (sums?.totalOut ?? 0)) / (sums!.countedRows) * 100) / 100 : 0}
           ccy={prefs?.base_currency ?? undefined}
           locale={locale}
           activeDir={filterDir}

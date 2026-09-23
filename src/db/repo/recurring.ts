@@ -14,7 +14,7 @@ import { withTx } from "../tx";
 import { DomainError } from "../errors";
 import { round2 } from "@/domain/money";
 import { validateCurrency, validateName } from "@/domain/validators";
-import { addDaysISO, addMonthsISO, daysBetween } from "@/lib/date";
+import { addDaysISO, addMonthsISO, dayOfMonth, daysBetween } from "@/lib/date";
 import { getBalance, getSource } from "./sources";
 import { createNotification, hasUnread } from "./notifications";
 
@@ -40,19 +40,29 @@ export interface RecurringRow {
   updated_at: string;
 }
 
-/** Advance one period; unknown frequency falls back to monthly (with clamping). */
-export function computeNextDueDate(current: string, frequency: string): string {
+/**
+ * Advance one period; unknown frequency falls back to monthly (with clamping).
+ * `anchorDay` is the day-of-month the rule was set on (its start_date): a bill
+ * due on the 31st is clamped to Feb 28 but comes back to Mar 31 instead of
+ * drifting to the 28th forever.
+ */
+export function computeNextDueDate(current: string, frequency: string, anchorDay?: number): string {
   switch (frequency) {
     case "daily":
       return addDaysISO(current, 1);
     case "weekly":
       return addDaysISO(current, 7);
     case "yearly":
-      return addMonthsISO(current, 12);
+      return addMonthsISO(current, 12, anchorDay);
     case "monthly":
     default:
-      return addMonthsISO(current, 1);
+      return addMonthsISO(current, 1, anchorDay);
   }
+}
+
+/** The day-of-month a rule's schedule is anchored to (its start date). */
+export function anchorDayOf(item: Pick<RecurringRow, "start_date">): number {
+  return dayOfMonth(item.start_date);
 }
 
 async function validateSourceCurrency(
@@ -179,7 +189,7 @@ export async function makeRecurringFromMovement(
     let nd = item.next_due_date;
     let guard = 0;
     while (nd <= today && guard < 36500) {
-      nd = computeNextDueDate(nd, item.frequency);
+      nd = computeNextDueDate(nd, item.frequency, anchorDayOf(item));
       guard += 1;
     }
     await db.execute(`UPDATE recurring_items SET next_due_date = ?, updated_at = ? WHERE id = ?`, [nd, now(), id]);
@@ -261,7 +271,7 @@ export async function applyRecurringItem(
   const amount = opts.amount ?? item.amount;
   const ts = now();
   const lastFired = item.next_due_date;
-  const nextDue = computeNextDueDate(item.next_due_date, item.frequency);
+  const nextDue = computeNextDueDate(item.next_due_date, item.frequency, anchorDayOf(item));
   // Book the movement, post the notification, and advance the cursor as ONE atomic
   // unit. On the boot/scheduler path (connection.ts) the executor is the serialized
   // one, so without this a crash between the INSERT and the cursor UPDATE would
@@ -389,7 +399,8 @@ export async function listRecurring(db: SqlExecutor, today: string): Promise<Enr
   return rows.map((r) => ({ ...r, days_until: daysBetween(today, r.next_due_date) }));
 }
 
-const MONTHLY_MULTIPLIER: Record<string, number> = {
+/** Occurrences per month by frequency (365.25-day year), shared with the exports. */
+export const MONTHLY_MULTIPLIER: Record<string, number> = {
   daily: 365.25 / 12,
   weekly: 52.1785714 / 12,
   monthly: 1,

@@ -194,6 +194,9 @@ export async function closeGoal(
   const g = await getGoal(db, id);
   if (!g) throw new DomainError("not_found");
   if (g.status === "cancelled") throw new DomainError("goal_cancelled");
+  // A completed goal was already refunded (its allocation rows are gone), so
+  // there is nothing left to pay out — re-closing must not silently succeed.
+  if (g.status !== "active") throw new DomainError("goal_not_active");
   const sameSource = toSourceId === g.source_id;
   // Refunding into the goal's own accumulating source is a no-op self-transfer.
   // The standalone close UI rejects it; but purchasing a whim straight from its

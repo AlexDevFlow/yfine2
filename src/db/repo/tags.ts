@@ -106,9 +106,12 @@ export async function deleteTag(db: SqlExecutor, id: number): Promise<void> {
 }
 
 /**
- * Merge `fromId` into `intoId`: re-point every tagged movement to the target tag
- * (deduping links), drop the source tag's budgets, then delete the source tag.
- * Run inside a transaction by the caller.
+ * Merge `fromId` into `intoId`: re-point every tagged movement (and legacy
+ * saving link) to the target tag, deduping links; carry the source tag's
+ * budgets over unless the target already has an active budget in that
+ * currency (then the source's is dropped — two active budgets per tag+currency
+ * are not allowed); then delete the source tag. Run inside a transaction by
+ * the caller.
  */
 export async function mergeTags(db: SqlExecutor, fromId: number, intoId: number): Promise<void> {
   if (fromId === intoId) throw new DomainError("same_source");
@@ -119,6 +122,23 @@ export async function mergeTags(db: SqlExecutor, fromId: number, intoId: number)
     [intoId, fromId],
   );
   await db.execute(`DELETE FROM movement_tag WHERE tag_id = ?`, [fromId]);
-  await db.execute(`DELETE FROM budgets WHERE tag_id = ?`, [fromId]);
+  // Not-yet-migrated legacy savings keep their tag links too (they cascade
+  // away with the tag otherwise, and the wizard copies them onto the transfer).
+  await db.execute(
+    `INSERT OR IGNORE INTO saving_tag (saving_id, tag_id) SELECT saving_id, ? FROM saving_tag WHERE tag_id = ?`,
+    [intoId, fromId],
+  );
+  await db.execute(`DELETE FROM saving_tag WHERE tag_id = ?`, [fromId]);
+  // Budgets: keep the user's limit when it doesn't collide with one already on
+  // the target; the alert band resets since the actuals now cover both tags.
+  await db.execute(
+    `DELETE FROM budgets WHERE tag_id = ? AND active = 1 AND currency IN
+       (SELECT currency FROM budgets WHERE tag_id = ? AND active = 1)`,
+    [fromId, intoId],
+  );
+  await db.execute(
+    `UPDATE budgets SET tag_id = ?, last_alert_period = NULL, last_alert_level = 0, updated_at = ? WHERE tag_id = ?`,
+    [intoId, now(), fromId],
+  );
   await db.execute(`DELETE FROM tags WHERE id = ?`, [fromId]);
 }

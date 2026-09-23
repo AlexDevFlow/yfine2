@@ -814,7 +814,11 @@ function ImportCard() {
         {/* target source + create-new-source (gap 7) */}
         <div className="flex flex-wrap items-end gap-2">
           <Field label={t("import_target_source", { defaultValue: "Import into source" })} htmlFor="imp-src">
-            <Select id="imp-src" value={sourceId} onChange={(e) => { const v = e.target.value; setSourceId(v); if (file && v !== NEW_SOURCE) void runPreview(file, { sourceId: v ? Number(v) : null, ...(columnMap ? { map: columnMap } : {}) }); }} className="min-w-[200px]">
+            {/* Re-preview on EVERY target change, "new source" included: duplicate
+                flags are computed against the chosen account, and a brand-new
+                one has nothing to be a duplicate of — keeping the previous
+                account's flags would silently skip rows from the import. */}
+            <Select id="imp-src" value={sourceId} onChange={(e) => { const v = e.target.value; setSourceId(v); if (file) void runPreview(file, { sourceId: v && v !== NEW_SOURCE ? Number(v) : null, ...(columnMap ? { map: columnMap } : {}) }); }} className="min-w-[200px]">
               <option value="">{t("select_account", { defaultValue: "Select an account…" })}</option>
               {(sources ?? []).map((s) => <option key={s.id} value={s.id}>{s.name} · {s.currency}</option>)}
               <option value={NEW_SOURCE}>+ {t("import_create_new_source", { defaultValue: "Create new source" })}</option>

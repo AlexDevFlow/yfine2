@@ -402,7 +402,15 @@ export async function fundBalanceTrend(
     monthSet.add(r.month);
     ccySet.add(r.currency);
   }
-  const allMonths = [...monthSet].sort();
+  // Walk every month from the earliest movement (or the cutoff, whichever is
+  // first) through today, not just the months that had movements: a balance is
+  // a LEVEL, so a fund untouched for a year still has its balance in every one
+  // of those months — dropping them left gaps in the chart and made a dormant
+  // fund vanish from it entirely.
+  const window = lastNMonths(today, months);
+  const firstMonth = [...monthSet].sort()[0];
+  const walkFrom = firstMonth != null && firstMonth < cutoff ? firstMonth : cutoff;
+  const allMonths = monthsBetween(walkFrom, window[window.length - 1]);
   const out: TrendPoint[] = [];
   for (const cur of [...ccySet].sort()) {
     let running = 0;
@@ -411,6 +419,17 @@ export async function fundBalanceTrend(
       if (month < cutoff) continue; // accumulate history but only emit from cutoff
       out.push({ month, currency: cur, value: round2(running) });
     }
+  }
+  return out;
+}
+
+/** Every "YYYY-MM" from `from` to `to` inclusive (both YYYY-MM), chronological. */
+function monthsBetween(from: string, to: string): string[] {
+  const out: string[] = [];
+  const [fy, fm] = from.split("-").map(Number);
+  const [ty, tm] = to.split("-").map(Number);
+  for (let i = fy * 12 + (fm - 1); i <= ty * 12 + (tm - 1); i++) {
+    out.push(`${Math.floor(i / 12)}-${String((i % 12) + 1).padStart(2, "0")}`);
   }
   return out;
 }

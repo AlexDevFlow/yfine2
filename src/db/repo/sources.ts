@@ -134,7 +134,25 @@ export async function updateSource(
   };
 
   if (patch.name !== undefined) set("name", patch.name);
-  if (patch.currency !== undefined) set("currency", patch.currency.trim().toUpperCase());
+  const newCurrency = patch.currency !== undefined ? patch.currency.trim().toUpperCase() : cur.currency;
+  const currencyChanged = newCurrency !== cur.currency;
+  if (currencyChanged) {
+    // A fund IS its currency: "one fund per currency" and every savings/goal
+    // total group by it, so re-labelling one would collide with (or orphan)
+    // the fund the contributions were actually made into.
+    if (cur.is_savings_fund === 1) throw new DomainError("fund_currency_locked");
+    // Goals are created currency-matched to their source and their allocations
+    // were transferred in that currency; an active one would silently hold
+    // money in a currency it no longer reports.
+    const activeGoals = await db.select<{ c: number }>(
+      `SELECT COUNT(*) AS c FROM goals WHERE source_id = ? AND status = 'active'`,
+      [id],
+    );
+    if ((activeGoals[0]?.c ?? 0) > 0) throw new DomainError("active_goal_blocks_currency_change");
+    set("currency", newCurrency);
+  } else if (patch.currency !== undefined) {
+    set("currency", newCurrency);
+  }
   if (patch.starting_balance !== undefined) set("starting_balance", patch.starting_balance);
   if (patch.exclude_from_stats !== undefined)
     set("exclude_from_stats", patch.exclude_from_stats ? 1 : 0);
@@ -151,6 +169,15 @@ export async function updateSource(
 
   set("updated_at", now());
   await db.execute(`UPDATE sources SET ${sets.join(", ")} WHERE id = ?`, [...params, id]);
+  if (currencyChanged) {
+    // Recurring rules are validated to share their source's currency (their
+    // amounts book straight into it); keep that invariant when the source moves.
+    await db.execute(`UPDATE recurring_items SET currency = ?, updated_at = ? WHERE source_id = ?`, [
+      newCurrency,
+      now(),
+      id,
+    ]);
+  }
   return (await getSource(db, id))!;
 }
 
@@ -310,9 +337,16 @@ export async function deleteSource(
   if ((activeGoals[0]?.c ?? 0) > 0) throw new DomainError("active_goal_blocks_delete");
 
   if (action.kind === "move_to") {
+    // Moving onto itself would repoint nothing and then delete the source the
+    // movements still reference (FK failure at best, orphans at worst).
+    if (action.targetId === id) throw new DomainError("same_source");
     const target = await getSource(db, action.targetId);
     if (!target) throw new DomainError("not_found");
     if (target.currency !== s.currency) throw new DomainError("cross_currency");
+    // A fund's balance must only move through the savings/goals flows: pouring
+    // a regular account's history into it would inflate it with no contribution
+    // records behind the money (mirrors mergeSources' fund_not_mergeable).
+    if (target.is_savings_fund === 1) throw new DomainError("fund_not_mergeable");
     await db.execute(`UPDATE movements SET source_id = ? WHERE source_id = ?`, [action.targetId, id]);
     await dropSelfTransferPairs(db, action.targetId);
     await db.execute(`UPDATE recurring_items SET source_id = ? WHERE source_id = ?`, [action.targetId, id]);

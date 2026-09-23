@@ -10,7 +10,7 @@
  * source hint. Multiple <STMTRS>/accounts are merged with a warning, matching
  * the original.
  */
-import { parseAmount, type ParseResult, type ParsedMovement } from "./csv";
+import { isValidCalendarDate, parseAmount, type ParseResult, type ParsedMovement } from "./csv";
 import { round2 } from "@/domain/money";
 
 export interface OfxParsed extends ParseResult {
@@ -45,14 +45,14 @@ export function parseOfxDate(raw: string | null): string | null {
   const compact = /^(\d{4})(\d{2})(\d{2})/.exec(cleaned);
   if (compact) {
     const y = Number(compact[1]), mo = Number(compact[2]), d = Number(compact[3]);
-    if (mo >= 1 && mo <= 12 && d >= 1 && d <= 31) return `${y}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+    if (isValidCalendarDate(y, mo, d)) return `${y}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
   }
   const dashed = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(cleaned);
   if (dashed) {
-    const mo = Number(dashed[2]), d = Number(dashed[3]);
-    // Validate range like the compact branch — otherwise "2024-13-40" would import
-    // as a garbage date instead of being dropped.
-    if (mo >= 1 && mo <= 12 && d >= 1 && d <= 31) {
+    const y = Number(dashed[1]), mo = Number(dashed[2]), d = Number(dashed[3]);
+    // Validate like the compact branch — otherwise "2024-13-40" (or "2024-02-30")
+    // would import as a garbage date instead of being dropped.
+    if (isValidCalendarDate(y, mo, d)) {
       return `${dashed[1]}-${dashed[2].padStart(2, "0")}-${dashed[3].padStart(2, "0")}`;
     }
   }

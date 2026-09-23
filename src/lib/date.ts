@@ -12,16 +12,26 @@ export function todayISO(d: Date = new Date()): string {
  * Add `n` whole months to an ISO date, clamping the day to the last day of the
  * target month (Jan 31 + 1mo -> Feb 28/29), matching dateutil.relativedelta as
  * used by the legacy scheduler/yield code.
+ *
+ * `anchorDay` (1-31) pins the day-of-month the schedule was set on. Without
+ * it, stepping month by month from the 31st drifts for good: Jan 31 → Feb 28
+ * → Mar 28 → Apr 28… With it, Feb 28 + 1mo (anchor 31) → Mar 31 again.
  */
-export function addMonthsISO(iso: string, n: number): string {
+export function addMonthsISO(iso: string, n: number, anchorDay?: number): string {
   const [y, m, d] = iso.split("-").map(Number);
   const targetMonthStart = new Date(Date.UTC(y, m - 1 + n, 1));
   const ty = targetMonthStart.getUTCFullYear();
   const tm = targetMonthStart.getUTCMonth();
   const lastDay = new Date(Date.UTC(ty, tm + 1, 0)).getUTCDate();
-  const day = Math.min(d, lastDay);
+  const wanted = anchorDay != null && anchorDay >= 1 && anchorDay <= 31 ? anchorDay : d;
+  const day = Math.min(wanted, lastDay);
   const res = new Date(Date.UTC(ty, tm, day));
   return res.toISOString().slice(0, 10);
+}
+
+/** Day-of-month of an ISO date, e.g. "2026-05-17" → 17. */
+export function dayOfMonth(iso: string): number {
+  return Number(iso.slice(8, 10));
 }
 
 /** "2026-05" → "May 2026" (locale-aware). */

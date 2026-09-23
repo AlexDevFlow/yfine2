@@ -68,8 +68,13 @@ export const EXPORT_SECTIONS: { key: SectionKey; label: string }[] = [
   { key: "whims", label: "Whims" },
 ];
 
-/** Monthly-equivalence factors for recurring items (excel_export.py:527). */
-const FREQ_MONTHLY_FACTOR: Record<string, number> = { daily: 30, weekly: 4.33, monthly: 1, yearly: 1 / 12 };
+/**
+ * Monthly-equivalence factors for recurring items — the SAME ones the
+ * Recurring page's summary uses, so the exported "Monthly expense" never
+ * disagrees with the number shown in the app (the legacy export rounded to
+ * 30 days/month and 4.33 weeks/month and drifted from it).
+ */
+const FREQ_MONTHLY_FACTOR: Record<string, number> = recurring.MONTHLY_MULTIPLIER;
 
 interface Section {
   title: string;
