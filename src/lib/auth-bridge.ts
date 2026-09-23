@@ -104,29 +104,59 @@ export function setRuntimePassword(pw: string | null): void {
 }
 
 /**
- * Re-encrypt the active profile's working DB before switching to another
- * profile (same guarantee as the on-close hook, but without closing). No-op
- * when no runtime password is held. Clears the runtime password either way —
- * after the switch reload it would belong to the wrong profile.
+ * Bring the database back after an exit-path encryption FAILED. The pools were
+ * closed for the snapshot and plugin-sql keeps the dead pool registered, so
+ * every query would fail until the app restarted; re-loading the same path
+ * replaces it. The plaintext is still on disk and still canonical (unlock
+ * marker), so simply reconnecting is safe.
  */
-export async function encryptForProfileSwitch(): Promise<void> {
+async function reopenDbAfterFailedEncrypt(): Promise<void> {
+  try {
+    const { resetDbConnection } = await import("@/db/connection");
+    resetDbConnection();
+  } catch {
+    /* nothing to reset */
+  }
+}
+
+/**
+ * Encrypt the working DB with the held session password because the process
+ * is about to leave this profile (profile switch, an update installer that
+ * exits without the window-close hooks). The password is kept until the
+ * encryption SUCCEEDED: dropping it first would leave the database plaintext
+ * with nothing left to encrypt it on the next close. On failure the user is
+ * told, the database is reopened so the app keeps working, and the error is
+ * rethrown so the caller aborts whatever it was about to do.
+ */
+export async function encryptBeforeLeaving(): Promise<void> {
   if (!isTauri()) return;
   const pw = runtimePassword;
-  runtimePassword = null;
   if (!pw) return;
   await closeSqlPools(); // settle yfine.db before the snapshot
   try {
     await encryptDb(pw);
   } catch (err) {
-    // Non-fatal for the switch: the unlock marker keeps the plaintext canonical
-    // and the next unlock/clean close re-encrypts — but never swallow silently
-    // (the switch reload proceeds either way; Rust drops the session key on
-    // profile_set_active so this password can't leak onto the next profile).
-    console.error("[yfine] profile-switch encryption failed; database left unencrypted:", err);
+    await reopenDbAfterFailedEncrypt();
+    reportEncryptFailure(err);
+    throw err;
   }
+  runtimePassword = null;
+}
+
+/**
+ * Re-encrypt the active profile's working DB before switching to another
+ * profile (same guarantee as the on-close hook, but without closing). No-op
+ * when no runtime password is held. Throws — with the user already notified —
+ * when encryption fails, so the switch is abandoned instead of leaving this
+ * profile's database plaintext behind.
+ */
+export async function encryptForProfileSwitch(): Promise<void> {
+  await encryptBeforeLeaving();
 }
 
 let closeHookRegistered = false;
+/** A close request already running its encryption; a second one must not race it. */
+let closing = false;
 /** Re-encrypt the working DB when the window closes (mirrors the legacy atexit). */
 export async function registerReencryptOnClose(): Promise<void> {
   if (!isTauri() || closeHookRegistered) return;
@@ -143,22 +173,33 @@ export async function registerReencryptOnClose(): Promise<void> {
       // runs the same hardened routine with the Rust-held session password).
       if (!runtimePassword) return;
       event.preventDefault();
-      // Settle the DB file before the Rust snapshot (encrypt_db also closes the
-      // pools itself; doing it here too keeps the fast path safe even if the
-      // Rust-side close were ever to time out).
-      await closeSqlPools();
+      // Two close requests in a row would run two encryptions at once: the
+      // second one's tmp sweep deletes the first one's in-progress ciphertext
+      // and one of them reports a false failure. Let the first finish.
+      if (closing) return;
+      closing = true;
       try {
-        await encryptDb(runtimePassword);
-      } catch (err) {
-        // Never swallow this: the DB is still PLAINTEXT on disk. Tell the user
-        // with a blocking notice and do NOT destroy the window — closing again
-        // re-runs this hook (a retry), and the unlock marker keeps the
-        // plaintext canonical if they force-quit instead.
-        reportEncryptFailure(err);
-        return;
+        // Settle the DB file before the Rust snapshot (encrypt_db also closes the
+        // pools itself; doing it here too keeps the fast path safe even if the
+        // Rust-side close were ever to time out).
+        await closeSqlPools();
+        try {
+          await encryptDb(runtimePassword);
+        } catch (err) {
+          // Never swallow this: the DB is still PLAINTEXT on disk. Reopen it so
+          // the app keeps working, tell the user with a blocking notice and do
+          // NOT destroy the window — closing again re-runs this hook (a retry),
+          // and the unlock marker keeps the plaintext canonical if they
+          // force-quit instead.
+          await reopenDbAfterFailedEncrypt();
+          reportEncryptFailure(err);
+          return;
+        }
+        runtimePassword = null;
+        await win.destroy();
+      } finally {
+        closing = false;
       }
-      runtimePassword = null;
-      await win.destroy();
     });
   } catch {
     /* window API unavailable — skip */

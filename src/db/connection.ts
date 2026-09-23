@@ -27,6 +27,17 @@ export function getDb(): Promise<SqlExecutor> {
   return dbPromise;
 }
 
+/**
+ * Forget the current connection so the next getDb() opens the database again.
+ * Used after an exit-path encryption FAILED: the close hook had already shut
+ * every plugin-sql pool, and plugin-sql's `close` leaves the (dead) pool
+ * registered, so without a fresh `load` every later query would fail while the
+ * window stayed open. Loading the same path again replaces the pool.
+ */
+export function resetDbConnection(): void {
+  dbPromise = null;
+}
+
 /** True when running on the in-memory preview DB (no persistence). */
 export const isPreviewDb = !isTauri();
 

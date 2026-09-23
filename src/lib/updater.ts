@@ -102,12 +102,18 @@ export function hasPendingUpdate(): boolean {
  * relaunch into the new version. Throws if nothing is staged or the download
  * fails (callers surface it as a toast). The process restarts on success, so
  * code after `relaunch()` does not run.
+ *
+ * The working database is re-encrypted BETWEEN download and install: on
+ * Windows the installer step ends the process itself, without the window
+ * close or exit events the encrypt-on-exit paths hang off, so an unlocked
+ * session would otherwise be left plaintext on disk. Download first so a
+ * failed download never costs the user their open session.
  */
 export async function installPendingUpdate(onProgress?: InstallProgress): Promise<void> {
   if (!pending) throw new Error("no_update");
   let downloaded = 0;
   let total: number | null = null;
-  await pending.downloadAndInstall((ev) => {
+  await pending.download((ev) => {
     switch (ev.event) {
       case "Started":
         total = ev.data.contentLength ?? null;
@@ -122,6 +128,9 @@ export async function installPendingUpdate(onProgress?: InstallProgress): Promis
         break;
     }
   });
+  const { encryptBeforeLeaving } = await import("@/lib/auth-bridge");
+  await encryptBeforeLeaving(); // throws (user already notified) → install is skipped
+  await pending.install();
   const { relaunch } = await import("@tauri-apps/plugin-process");
   await relaunch();
 }

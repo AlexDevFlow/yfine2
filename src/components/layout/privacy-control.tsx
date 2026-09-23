@@ -32,7 +32,10 @@ export function PrivacyControl() {
   }, [hoverReveal]);
 
   const onToggle = () => {
-    // Revealing (ON → OFF) requires the code when one is set; hiding is always free.
+    // Revealing (ON → OFF) requires the code when one is set; hiding is always
+    // free. Until the settings have loaded we don't know whether a code exists,
+    // so revealing waits rather than slipping through the gap.
+    if (privacy.on && !prefs) return;
     if (privacy.on && unlockCode) {
       setCode("");
       setWrong(false);

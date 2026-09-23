@@ -16,6 +16,7 @@ import { Topbar } from "./topbar";
 import { useHotkeys } from "./use-hotkeys";
 import { ExpandableTabs } from "@/components/ui/expandable-tabs";
 import { ChangelogModal } from "@/components/changelog-modal";
+import { useTheme } from "@/components/theme/theme-provider";
 import { HelpDrawer } from "@/components/help/help-drawer";
 import { usePreferences, useUpdatePreferences } from "@/db/queries";
 import { getDb } from "@/db/connection";
@@ -302,6 +303,31 @@ export function AppShell() {
   useEffect(() => {
     if (prefs?.ui_scale) applyUiScale(prefs.ui_scale);
   }, [prefs?.ui_scale]);
+
+  // The theme is a per-profile preference stored in the DB, but the provider
+  // only knows localStorage (shared by every profile and untouched by a backup
+  // restore). The DB value wins whenever it (re)loads — boot, profile switch,
+  // restore — and a change made in-session (topbar toggle, hotkey) is written
+  // back so the two never drift.
+  const { theme, setTheme } = useTheme();
+  const dbThemeApplied = useRef<string | null>(null);
+  useEffect(() => {
+    const dbTheme = prefs?.theme;
+    if (!dbTheme || (dbTheme !== "light" && dbTheme !== "dark" && dbTheme !== "system")) return;
+    if (dbThemeApplied.current === dbTheme) return;
+    dbThemeApplied.current = dbTheme;
+    if (dbTheme !== theme) setTheme(dbTheme);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefs?.theme]);
+  const { mutate: persistPrefs } = updatePrefs;
+  useEffect(() => {
+    if (!prefs || dbThemeApplied.current == null) return; // DB value not applied yet
+    if (theme !== prefs.theme) {
+      dbThemeApplied.current = theme; // our own write coming back is not a new DB value
+      persistPrefs({ theme });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [theme]);
 
   // Opt-in live price refresh on a gentle 15-min interval. maybeRefreshPrices is
   // self-throttling (it skips when the last refresh is < 10 min old) and a no-op

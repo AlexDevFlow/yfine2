@@ -14,7 +14,7 @@ import { ToastProvider } from "@/components/ui/toast";
 import { ConfirmProvider } from "@/components/ui/confirm";
 import { PrivacyProvider } from "@/lib/privacy";
 import { LoginScreen } from "@/components/auth/login-screen";
-import { isDbEncrypted, registerReencryptOnClose, runCrashRecovery, setRuntimePassword } from "@/lib/auth-bridge";
+import { isDbEncrypted, isPasswordSet, registerReencryptOnClose, runCrashRecovery, setRuntimePassword } from "@/lib/auth-bridge";
 import { installNoSelectGuard } from "@/lib/no-select";
 import { router } from "./router";
 
@@ -45,13 +45,19 @@ function Root() {
   useEffect(() => {
     // Crash recovery BEFORE the DB connection is opened: drop a stale plaintext
     // yfine.db left by an unclean shutdown when the .enc is canonical, then gate
-    // on whether the DB is (still) encrypted. The router — which lazily opens the
-    // DB via getDb() — only mounts once we leave the locked/loading state below.
+    // on whether a PASSWORD is set — not merely on whether the encrypted archive
+    // exists. Right after set/change password (and after any unclean exit that
+    // followed) there is a password but no archive yet; opening unlocked in that
+    // state never arms the session key, so the database would stay plaintext
+    // for good. Logging in with no archive just verifies and arms it. The
+    // router — which lazily opens the DB via getDb() — only mounts once we
+    // leave the locked/loading state below.
     runCrashRecovery()
-      .then(isDbEncrypted)
-      .then((encrypted) => {
-        setLocked(encrypted);
-        if (encrypted) setLoginVisible(true);
+      .then(() => Promise.all([isPasswordSet(), isDbEncrypted()]))
+      .then(([passwordSet, encrypted]) => {
+        const locked = passwordSet || encrypted;
+        setLocked(locked);
+        if (locked) setLoginVisible(true);
         else setAppMounted(true);
       })
       .catch(() => {

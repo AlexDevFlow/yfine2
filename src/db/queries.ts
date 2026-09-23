@@ -31,6 +31,7 @@ import { addMonthsISO, monthEnd, monthStart, todayISO } from "@/lib/date";
 import type { SourceRow, TagRow } from "./schema-types";
 import { withTx } from "./tx";
 import type { SqlExecutor } from "./types";
+import i18n from "@/i18n";
 
 /**
  * withTx + deferred attachment-file cleanup. Delete cascades only STAGE their
@@ -877,7 +878,19 @@ export function useAssetSearch(assetClass: "crypto" | "stock", query: string) {
 export function useImportBackup() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (bytes: Uint8Array) => importFile(await getDb(), bytes),
+    mutationFn: async (bytes: Uint8Array) => {
+      const db = await getDb();
+      await importFile(db, bytes);
+      // The restored settings row is now the truth for the language too; the
+      // translator would otherwise keep the old one until the next launch and
+      // then switch unexpectedly at boot.
+      try {
+        const { locale } = await settingsRepo.getSettings(db, { locale: i18n.resolvedLanguage });
+        if (locale && i18n.resolvedLanguage !== locale) await i18n.changeLanguage(locale);
+      } catch {
+        /* never fail a completed restore over the UI language */
+      }
+    },
     onSuccess: () => void qc.invalidateQueries(), // a restore touches everything
   });
 }

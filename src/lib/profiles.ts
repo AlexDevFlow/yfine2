@@ -141,8 +141,19 @@ export async function deleteProfile(id: string): Promise<void> {
  */
 export async function switchProfile(id: string): Promise<void> {
   if (isTauri()) {
+    // Encryption failing ABORTS the switch (the user was told; the database
+    // was reopened): this profile's data must never be left plaintext behind.
     await encryptForProfileSwitch();
-    await invoke<void>("profile_set_active", { id });
+    try {
+      await invoke<void>("profile_set_active", { id });
+    } catch (err) {
+      // The current profile's database may already be encrypted and its pools
+      // closed, so staying here is not an option: reload so boot re-runs
+      // against whichever profile is active (this one, via its lock screen).
+      console.error("[yfine] profile switch failed after encryption:", err);
+      window.location.reload();
+      throw err;
+    }
   } else {
     const state = previewRead();
     if (state.profiles.some((x) => x.id === id)) {

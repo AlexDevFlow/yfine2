@@ -137,9 +137,20 @@ pub fn is_password_set(app: tauri::AppHandle) -> bool {
 // normal unlock costs one derivation of wall-clock, not two.
 #[tauri::command(async)]
 pub fn auth_login(app: tauri::AppHandle, password: String) -> Result<bool, String> {
-    let cfg = read_config(&app);
-    let hash = cfg["password_hash"].as_str().ok_or("no password set")?;
-    let psalt = cfg["password_salt"].as_str().ok_or("no password salt")?;
+    let mut cfg = read_config(&app);
+    // Persistent brute-force throttle (5 wrong passwords per 5 minutes locks the
+    // profile for 5 minutes). It lives in the auth config, not in the window's
+    // memory, so a relaunch does not reset it. Reported as "locked:<seconds>"
+    // so the login screen can show the countdown.
+    let now_s = unix_now();
+    if let Some(until) = cfg["lock_until"].as_u64() {
+        if now_s < until {
+            return Err(format!("locked:{}", until - now_s));
+        }
+    }
+    let hash = cfg["password_hash"].as_str().ok_or("no password set")?.to_string();
+    let psalt = cfg["password_salt"].as_str().ok_or("no password salt")?.to_string();
+    let (hash, psalt) = (hash.as_str(), psalt.as_str());
     // If a deliberate-unlock marker is present alongside a plaintext DB, the previous
     // session unlocked and then crashed before re-encrypting: the plaintext is the
     // CANONICAL, newest copy (crash_recovery keeps it) and the `.enc` is stale.
@@ -162,6 +173,7 @@ pub fn auth_login(app: tauri::AppHandle, password: String) -> Result<bool, Strin
             (verified, derived.join().unwrap())
         });
         if !verified {
+            record_failed_attempt(&app, &mut cfg, now_s);
             return Ok(false);
         }
         let archive = fs::read(enc_path(&app)?).map_err(|e| e.to_string())?;
@@ -203,12 +215,85 @@ pub fn auth_login(app: tauri::AppHandle, password: String) -> Result<bool, Strin
     } else if !crypto::verify_password(&password, hash, psalt) {
         // No archive to decrypt (or the plaintext is canonical): a single verify is
         // already the minimum work — nothing to parallelize.
+        record_failed_attempt(&app, &mut cfg, now_s);
         return Ok(false);
+    }
+    // A correct password clears the throttle bookkeeping.
+    if cfg.get("failed_attempts").is_some() || cfg.get("lock_until").is_some() {
+        if let Some(obj) = cfg.as_object_mut() {
+            obj.remove("failed_attempts");
+            obj.remove("lock_until");
+        }
+        let _ = write_config(&app, &cfg);
     }
     // Arm the Rust-side session key so the ExitRequested path can re-encrypt
     // even when the JS close hook never fires (Cmd+Q / File→Quit).
     set_runtime_key(&app, Some(password));
     Ok(true)
+}
+
+/// Login throttle: at most `LOGIN_MAX_ATTEMPTS` wrong passwords within
+/// `LOGIN_WINDOW_SECS`, then the profile is locked for `LOGIN_WINDOW_SECS`.
+const LOGIN_MAX_ATTEMPTS: usize = 5;
+const LOGIN_WINDOW_SECS: u64 = 300;
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Pure throttle step over the auth config: prune attempts outside the window,
+/// record this one, and lock when the limit is reached. Returns true when a
+/// lock was just set. Unit-tested; `record_failed_attempt` persists the result.
+fn note_failed_attempt(cfg: &mut Value, now_s: u64) -> bool {
+    let mut attempts: Vec<u64> = cfg["failed_attempts"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|v| v.as_u64()).collect())
+        .unwrap_or_default();
+    attempts.retain(|t| now_s.saturating_sub(*t) < LOGIN_WINDOW_SECS);
+    attempts.push(now_s);
+    if attempts.len() >= LOGIN_MAX_ATTEMPTS {
+        cfg["lock_until"] = json!(now_s + LOGIN_WINDOW_SECS);
+        if let Some(obj) = cfg.as_object_mut() {
+            obj.remove("failed_attempts");
+        }
+        true
+    } else {
+        cfg["failed_attempts"] = json!(attempts);
+        false
+    }
+}
+
+fn record_failed_attempt(app: &tauri::AppHandle, cfg: &mut Value, now_s: u64) {
+    note_failed_attempt(cfg, now_s);
+    // Best-effort: a failed write only weakens the throttle, never the login.
+    let _ = write_config(app, cfg);
+}
+
+#[cfg(test)]
+mod throttle_tests {
+    use super::*;
+
+    #[test]
+    fn locks_after_five_wrong_passwords_inside_the_window() {
+        let mut cfg = json!({});
+        for i in 0..4 {
+            assert!(!note_failed_attempt(&mut cfg, 1000 + i));
+        }
+        assert_eq!(cfg["failed_attempts"].as_array().unwrap().len(), 4);
+        assert!(note_failed_attempt(&mut cfg, 1004));
+        assert_eq!(cfg["lock_until"].as_u64(), Some(1004 + LOGIN_WINDOW_SECS));
+        assert!(cfg.get("failed_attempts").is_none());
+    }
+
+    #[test]
+    fn attempts_outside_the_window_are_forgotten() {
+        let mut cfg = json!({ "failed_attempts": [1, 2, 3, 4] });
+        assert!(!note_failed_attempt(&mut cfg, 1000));
+        assert_eq!(cfg["failed_attempts"].as_array().unwrap().len(), 1);
+    }
 }
 
 /// Close every tauri-plugin-sql pool before touching yfine.db on disk. The

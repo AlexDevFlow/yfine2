@@ -54,6 +54,8 @@ export function LoginScreen({
     return () => clearInterval(id);
   }, [lockUntil]);
 
+  // `now` is refreshed when a lock starts (and every second while it lasts), so
+  // the countdown never shows the time the screen sat idle before the lock.
   const remaining = lockUntil !== null ? Math.max(0, Math.ceil((lockUntil - now) / 1000)) : 0;
   const locked = remaining > 0;
 
@@ -62,6 +64,7 @@ export function LoginScreen({
     attempts.current = attempts.current.filter((ts) => t0 - ts < WINDOW_SECONDS * 1000);
     attempts.current.push(t0);
     if (attempts.current.length >= MAX_ATTEMPTS) {
+      setNow(t0);
       setLockUntil(t0 + WINDOW_SECONDS * 1000);
     }
   };
@@ -84,7 +87,16 @@ export function LoginScreen({
         setError(t("login_wrong_password", { defaultValue: "Incorrect password." }));
         setBusy(false);
       }
-    } catch {
+    } catch (err) {
+      // The Rust side keeps a PERSISTENT throttle (it survives a relaunch, which
+      // the in-memory bucket above does not) and reports it as "locked:<secs>".
+      const m = /^locked:(\d+)/.exec(String((err as { message?: string })?.message ?? err));
+      if (m) {
+        setLockUntil(Date.now() + Number(m[1]) * 1000);
+        setNow(Date.now());
+        setBusy(false);
+        return;
+      }
       // Decrypt failure — distinct from a wrong password and NOT rate-limited.
       setError(t("login_decrypt_failed", { defaultValue: "Couldn't unlock the database." }));
       setBusy(false);

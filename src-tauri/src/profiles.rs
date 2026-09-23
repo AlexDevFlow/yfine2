@@ -338,11 +338,14 @@ pub fn profile_set_active(app: tauri::AppHandle, id: String) -> Result<(), Strin
         return Err("profile not found".into());
     }
     profile_dir(&app, &id)?; // ensure the dir exists before the reload opens the DB
+    cfg["active"] = json!(id);
+    write_config(&app, &cfg)?;
     // The Rust-side session password (if any) belongs to the OUTGOING profile:
     // drop it so no later exit path can encrypt the new profile's DB with the
     // old profile's key (encrypt_db already clears it on success — this covers
-    // the switch-after-failed-encrypt path too).
+    // the switch-after-failed-encrypt path too). Only once the switch is
+    // actually persisted: a failed write leaves the user in the old profile,
+    // whose database must still be re-encrypted on exit.
     crate::auth::set_runtime_key(&app, None);
-    cfg["active"] = json!(id);
-    write_config(&app, &cfg)
+    Ok(())
 }
