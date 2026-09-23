@@ -1,12 +1,18 @@
 import { RefreshCw, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Field, Input, Select } from "@/components/ui/input";
 import { useToast } from "@/components/ui/toast";
 import { useDeleteRate, useExchangeRates, usePreferences, useRefreshRates, useSources, useUpsertRate } from "@/db/queries";
 import { cn } from "@/lib/cn";
-import { formatDate } from "@/lib/date";
+import { formatDate, todayISO } from "@/lib/date";
+
+/** Local calendar day of a UTC ISO timestamp (falls back to the raw value when unparseable). */
+function localDay(ts: string): string {
+  const d = new Date(ts);
+  return Number.isNaN(d.getTime()) ? ts : todayISO(d);
+}
 import { BASE_CURRENCY_CODES, currencyFlag } from "@/lib/format";
 import { useErrorText } from "@/lib/use-error-text";
 
@@ -35,6 +41,18 @@ export function ExchangeRatesEditor() {
   const [from, setFrom] = useState(prefs?.base_currency ?? "EUR");
   const [to, setTo] = useState("USD");
   const [rate, setRate] = useState("");
+  // The preferences usually load AFTER this mounts: pick the user's base
+  // currency up once it arrives (unless they already changed the pair), and
+  // never leave the form on a same-currency pair like USD → USD.
+  const seeded = useRef(false);
+  useEffect(() => {
+    const base = prefs?.base_currency?.toUpperCase();
+    if (!base || seeded.current) return;
+    seeded.current = true;
+    setFrom(base);
+    if (base === to) setTo(base === "EUR" ? "USD" : "EUR");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefs?.base_currency]);
   // Per-row edit buffers, keyed by rate id: an inline input the user can retype
   // freely (empty / mid-typing states included) before it is committed on blur.
   const [drafts, setDrafts] = useState<Record<number, string>>({});
@@ -140,7 +158,8 @@ export function ExchangeRatesEditor() {
                     />
                   </td>
                   <td className="hidden px-3 py-2 text-xs text-muted sm:table-cell">
-                    {formatDate(r.updated_at, prefs?.date_format, locale)}
+                    {/* updated_at is a UTC instant: show the LOCAL calendar day, not the UTC date part. */}
+                    {formatDate(localDay(r.updated_at), prefs?.date_format, locale)}
                   </td>
                   <td className="px-3 py-2 text-right">
                     <Button type="button" variant="ghost" size="sm" onClick={() => remove.mutate(r.id)} aria-label={t("delete", { defaultValue: "Delete" })} title={t("delete", { defaultValue: "Delete" })}>

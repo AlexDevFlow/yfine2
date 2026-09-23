@@ -8,7 +8,7 @@ describe("settings repo", () => {
     const s = await getSettings(db);
     expect(s.id).toBe(1);
     expect(s.locale).toBe("en");
-    expect(s.theme).toBe("light");
+    expect(s.theme).toBe("system"); // a fresh profile follows the OS, like the theme provider's default
     expect(s.ui_scale).toBe("normal");
     // idempotent
     await getSettings(db);

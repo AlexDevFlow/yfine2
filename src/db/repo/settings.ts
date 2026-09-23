@@ -86,7 +86,7 @@ export async function getSettings(db: SqlExecutor, defaults: SettingsDefaults = 
   await db.execute(
     `INSERT OR IGNORE INTO settings
       (id,locale,date_format,base_currency,theme,hide_net_worth,last_source_id,mobile_nav_mode,bottom_nav_size,ui_scale,hotkeys_enabled,hotkeys_json,nav_layout_json,bottom_nav_json,lan_access,portfolio_prices_enabled,portfolio_prices_prompted,portfolio_charts_enabled,privacy_hover_reveal,privacy_unlock_code,auto_update_check,saved_views_json,movement_templates_json,net_worth_excluded_json,last_seen_version,created_at,updated_at)
-     VALUES (1,?,'dd/mm/yyyy',NULL,'light',0,NULL,'sidebar','md','normal',1,'{}','[]','[]',0,0,0,0,1,NULL,0,'[]','[]','[]',NULL,?,?)`,
+     VALUES (1,?,'dd/mm/yyyy',NULL,'system',0,NULL,'sidebar','md','normal',1,'{}','[]','[]',0,0,0,0,1,NULL,0,'[]','[]','[]',NULL,?,?)`,
     [seedLocale, ts, ts],
   );
   return (await db.select<SettingsRow>(`SELECT * FROM settings WHERE id = 1`))[0];
