@@ -8,6 +8,7 @@ import type { SqlExecutor } from "../types";
 import type { MovementRow } from "../schema-types";
 import { DomainError } from "../errors";
 import { round2 } from "@/domain/money";
+import { validateDate } from "@/domain/validators";
 import { lastNMonths, todayISO } from "@/lib/date";
 import { ensureFundForCurrency, getSource } from "./sources";
 import { createTransferPair, deleteMovementCascade } from "./transfers";
@@ -29,6 +30,7 @@ export async function createSaving(
   fundLabel = "Savings Fund",
 ): Promise<number> {
   if (!(input.amount > 0)) throw new DomainError("invalid_amount");
+  validateDate(input.date);
   const from = await getSource(db, input.fromSourceId);
   if (!from) throw new DomainError("not_found");
   if (from.is_savings_fund === 1) throw new DomainError("fund_save_rejected");
@@ -233,8 +235,10 @@ export async function updateSaving(
   const oset = (c: string, v: unknown) => (outSets.push(`${c} = ?`), outParams.push(v));
 
   if (patch.note !== undefined) {
-    iset("note", patch.note ?? null);
-    if (partner) oset("note", patch.note ?? null);
+    // Same normalisation as createSaving → transfers (blank → NULL, trimmed).
+    const note = patch.note?.trim() || null;
+    iset("note", note);
+    if (partner) oset("note", note);
   }
   if (patch.amount !== undefined) {
     if (!(patch.amount > 0)) throw new DomainError("invalid_amount");
@@ -242,6 +246,7 @@ export async function updateSaving(
     if (partner) oset("amount", patch.amount);
   }
   if (patch.date !== undefined) {
+    validateDate(patch.date);
     iset("date", patch.date);
     if (partner) oset("date", patch.date);
   }

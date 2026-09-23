@@ -984,6 +984,7 @@
   "err_fund_currency_locked": "La moneda de un fondo de ahorro no se puede cambiar: es el fondo de esa moneda.",
   "err_active_goal_blocks_currency_change": "Un objetivo activo ahorra en esta cuenta en su moneda actual: ciérralo o elimínalo primero.",
   "err_linked_goal_currency_locked": "Este capricho tiene un objetivo de ahorro activo en su moneda actual: cierra o elimina el objetivo primero.",
+  "err_invalid_date": "Introduce una fecha válida.",
   "updates": "Actualizaciones",
   "updates_hint": "Yfine puede buscar nuevas versiones en GitHub. Es la única función que accede a Internet por sí sola, y solo si la activas.",
   "current_version": "Versión actual",

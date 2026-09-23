@@ -984,6 +984,7 @@
   "err_fund_currency_locked": "La valuta di un fondo risparmi non può essere cambiata: è il fondo di quella valuta.",
   "err_active_goal_blocks_currency_change": "Un obiettivo attivo risparmia su questo conto nella valuta attuale: chiudilo o eliminalo prima.",
   "err_linked_goal_currency_locked": "Questo desiderio ha un obiettivo di risparmio attivo nella valuta attuale: chiudi o elimina prima l'obiettivo.",
+  "err_invalid_date": "Inserisci una data valida.",
   "updates": "Aggiornamenti",
   "updates_hint": "Yfine può cercare nuove versioni su GitHub. È l'unica funzione che accede a Internet da sola, e solo se la attivi.",
   "current_version": "Versione attuale",

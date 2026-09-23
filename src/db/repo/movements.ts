@@ -8,6 +8,7 @@
 import type { SqlExecutor } from "../types";
 import type { MovementRow } from "../schema-types";
 import { DomainError } from "../errors";
+import { validateDate } from "@/domain/validators";
 import { getSource } from "./sources";
 import { createTransferPair, deleteMovementCascade, type TransferPair } from "./transfers";
 
@@ -48,6 +49,7 @@ export interface NewMovement {
 
 export async function createMovement(db: SqlExecutor, data: NewMovement): Promise<number> {
   if (!(data.amount > 0)) throw new DomainError("invalid_amount");
+  const date = validateDate(data.date);
   if (data.source_id != null && !(await getSource(db, data.source_id)))
     throw new DomainError("not_found");
   const note = cleanNote(data.note);
@@ -56,7 +58,7 @@ export async function createMovement(db: SqlExecutor, data: NewMovement): Promis
     `INSERT INTO movements
        (source_id,amount,direction,date,note,transfer_pair_id,exclude_from_stats,is_savings_contribution,created_at,updated_at)
      VALUES (?,?,?,?,?,NULL,?,0,?,?) RETURNING id`,
-    [data.source_id ?? null, data.amount, data.direction, data.date, note, data.exclude_from_stats ? 1 : 0, ts, ts],
+    [data.source_id ?? null, data.amount, data.direction, date, note, data.exclude_from_stats ? 1 : 0, ts, ts],
   );
   if (data.tagIds) await setTags(db, rows[0].id, data.tagIds);
   return rows[0].id;
@@ -89,7 +91,7 @@ export async function updateMovement(db: SqlExecutor, id: number, patch: Movemen
     set("amount", patch.amount);
   }
   if (patch.direction !== undefined) set("direction", patch.direction);
-  if (patch.date !== undefined) set("date", patch.date);
+  if (patch.date !== undefined) set("date", validateDate(patch.date));
   if (patch.note !== undefined) set("note", cleanNote(patch.note));
   if (patch.exclude_from_stats !== undefined) set("exclude_from_stats", patch.exclude_from_stats ? 1 : 0);
   if (patch.source_id !== undefined) {
@@ -131,6 +133,7 @@ export async function createTransfer(db: SqlExecutor, t: NewTransfer): Promise<T
   if (t.fromSourceId === t.toSourceId) throw new DomainError("same_source");
   if (!(t.amount > 0)) throw new DomainError("invalid_amount");
   if (t.toAmount != null && !(t.toAmount > 0)) throw new DomainError("invalid_amount");
+  validateDate(t.date);
   const from = await getSource(db, t.fromSourceId);
   const to = await getSource(db, t.toSourceId);
   if (!from || !to) throw new DomainError("not_found");
@@ -213,6 +216,7 @@ export async function updateTransfer(db: SqlExecutor, outLegId: number, patch: T
   if (patch.fromSourceId !== undefined) oset("source_id", newFrom);
   if (patch.toSourceId !== undefined) iset("source_id", newTo);
   if (patch.date !== undefined) {
+    validateDate(patch.date);
     oset("date", patch.date);
     iset("date", patch.date);
   }

@@ -46,6 +46,7 @@ const MESSAGES: Record<DomainErrorCode, string> = {
   fund_currency_locked: "A savings fund's currency can't be changed — it is the fund for that currency.",
   active_goal_blocks_currency_change: "An active goal saves into this account in its current currency — close or delete it first.",
   linked_goal_currency_locked: "This whim has an active savings goal in its current currency — close or delete the goal first.",
+  invalid_date: "Enter a valid date.",
 };
 
 /** Maps a thrown DomainError (or any error) to a localized, human message. */

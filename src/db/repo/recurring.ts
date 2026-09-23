@@ -13,8 +13,8 @@ import type { SqlExecutor } from "../types";
 import { withTx } from "../tx";
 import { DomainError } from "../errors";
 import { round2 } from "@/domain/money";
-import { validateCurrency, validateName } from "@/domain/validators";
-import { addDaysISO, addMonthsISO, dayOfMonth, daysBetween } from "@/lib/date";
+import { validateCurrency, validateDate, validateName } from "@/domain/validators";
+import { addDaysISO, addMonthsISO, dayOfMonth, daysBetween, todayISO } from "@/lib/date";
 import { getBalance, getSource } from "./sources";
 import { createNotification, hasUnread } from "./notifications";
 
@@ -93,6 +93,8 @@ export interface NewRecurring {
 
 export async function createRecurring(db: SqlExecutor, data: NewRecurring): Promise<number> {
   if (!(data.amount > 0)) throw new DomainError("invalid_amount");
+  validateDate(data.start_date);
+  if (data.end_date) validateDate(data.end_date);
   if (data.end_date && data.end_date < data.start_date) throw new DomainError("invalid_range");
   const name = validateName(data.name);
   const currency = validateCurrency(data.currency);
@@ -214,6 +216,8 @@ export async function updateRecurring(db: SqlExecutor, id: number, patch: Recurr
     amount: patch.amount ?? cur.amount,
   };
   if (!(merged.amount > 0)) throw new DomainError("invalid_amount");
+  if (patch.start_date !== undefined) validateDate(patch.start_date);
+  if (patch.end_date) validateDate(patch.end_date);
   // BUG-3 fix: enforce end >= start on the merged state.
   if (merged.end_date && merged.end_date < merged.start_date) throw new DomainError("invalid_range");
   await validateSourceCurrency(db, merged.source_id, merged.currency);
@@ -268,6 +272,7 @@ export async function applyRecurringItem(
   opts: { amount?: number; note?: string | null } = {},
 ): Promise<{ last_fired_date: string; next_due_date: string }> {
   if (item.end_date && item.next_due_date > item.end_date) throw new DomainError("recurring_ended");
+  if (opts.amount != null && !(opts.amount > 0)) throw new DomainError("invalid_amount");
   const amount = opts.amount ?? item.amount;
   const ts = now();
   const lastFired = item.next_due_date;
@@ -412,8 +417,17 @@ export interface MonthlySummary {
   totalCount: number;
 }
 
-export async function monthlySummary(db: SqlExecutor): Promise<MonthlySummary> {
-  const rows = await db.select<RecurringRow>(`SELECT * FROM recurring_items`);
+/**
+ * Monthly-equivalent inflow/outflow of the rules that are still running. A
+ * rule past its end date will never fire again, so it must not keep inflating
+ * "Monthly outflow" (nor the export's summary, which shares this filter).
+ */
+export function isRuleActive(item: Pick<RecurringRow, "end_date">, today: string): boolean {
+  return !item.end_date || item.end_date >= today;
+}
+
+export async function monthlySummary(db: SqlExecutor, today: string = todayISO()): Promise<MonthlySummary> {
+  const rows = (await db.select<RecurringRow>(`SELECT * FROM recurring_items`)).filter((r) => isRuleActive(r, today));
   // Accumulate the RAW (unrounded) monthly-equivalents per currency and round
   // ONCE when reading the bucket out — matching services/recurring.py:79/89.
   // Rounding per item (or per running sum) lets several same-currency rules

@@ -277,3 +277,91 @@ describe("exchange-rate driven transfer edit sanity", () => {
     expect((await inLeg(db, pair.outId)).amount).toBe(25);
   });
 });
+
+describe("date validation at the repository boundary", () => {
+  it("rejects malformed or impossible dates on movements, transfers, savings and rules", async () => {
+    const { db } = await makeMemDb();
+    const a = await sources.createSource(db, { name: "A", currency: "EUR", starting_balance: 100 });
+    const b = await sources.createSource(db, { name: "B", currency: "EUR", starting_balance: 0 });
+    await expect(movements.createMovement(db, { source_id: a.id, amount: 1, direction: "out", date: "2026-02-30" })).rejects.toMatchObject({ code: "invalid_date" });
+    await expect(movements.createMovement(db, { source_id: a.id, amount: 1, direction: "out", date: "" })).rejects.toMatchObject({ code: "invalid_date" });
+    await expect(movements.createMovement(db, { source_id: a.id, amount: 1, direction: "out", date: "2026-5-1" })).rejects.toMatchObject({ code: "invalid_date" });
+    await expect(movements.createTransfer(db, { fromSourceId: a.id, toSourceId: b.id, amount: 1, date: "not-a-date" })).rejects.toMatchObject({ code: "invalid_date" });
+    await expect(createSaving(db, { fromSourceId: a.id, amount: 1, date: "2026-13-01" })).rejects.toMatchObject({ code: "invalid_date" });
+    await expect(recurring.createRecurring(db, { name: "X", amount: 1, direction: "out", currency: "EUR", frequency: "monthly", start_date: "2026-04-31" })).rejects.toMatchObject({ code: "invalid_date" });
+    const id = await movements.createMovement(db, { source_id: a.id, amount: 1, direction: "out", date: "2024-02-29" });
+    await expect(movements.updateMovement(db, id, { date: "2023-02-29" })).rejects.toMatchObject({ code: "invalid_date" });
+    expect((await movements.getMovement(db, id))!.date).toBe("2024-02-29");
+  });
+});
+
+describe("yield re-enable does not back-fill disabled periods", () => {
+  it("anchors the next accrual on today when interest was switched off in between", async () => {
+    const { db } = await makeMemDb();
+    const s = await sources.createSource(db, { name: "TD", currency: "EUR", starting_balance: 1000, yield_rate: 1, yield_period_months: 1 }, "2026-01-01");
+    // First period accrues on schedule, then the user turns interest off.
+    const { processSourceYields } = await import("./repo/scheduler");
+    expect(await processSourceYields(db, "2026-02-01")).toBe(1);
+    expect((await sources.getSource(db, s.id))!.yield_last_date).toBe("2026-02-01");
+    await sources.updateSource(db, s.id, { yield_rate: 0 }, "2026-02-05");
+    expect((await sources.getSource(db, s.id))!.yield_next_date).toBeNull();
+    // Six months later interest is switched back on: nothing is owed for the gap.
+    await sources.updateSource(db, s.id, { yield_rate: 1 }, "2026-08-10");
+    expect((await sources.getSource(db, s.id))!.yield_next_date).toBe("2026-09-10");
+    expect(await processSourceYields(db, "2026-08-10")).toBe(0);
+    // A rate change on a RUNNING schedule still re-anchors on the last credit (§17).
+    await sources.updateSource(db, s.id, { yield_period_months: 2 }, "2026-08-20");
+    expect((await sources.getSource(db, s.id))!.yield_next_date).toBe("2026-04-01"); // last 2026-02-01 + 2mo
+  });
+});
+
+describe("recurring rules past their end date", () => {
+  it("drop out of the monthly summary and of the dashboard's upcoming list", async () => {
+    const { db } = await makeMemDb();
+    const acct = await sources.createSource(db, { name: "A", currency: "EUR", starting_balance: 100 });
+    await recurring.createRecurring(db, { name: "Old gym", amount: 30, direction: "out", currency: "EUR", frequency: "monthly", start_date: "2025-01-01", end_date: "2025-12-31", source_id: acct.id });
+    await recurring.createRecurring(db, { name: "Rent", amount: 700, direction: "out", currency: "EUR", frequency: "monthly", start_date: "2026-01-01", source_id: acct.id });
+    // A rule still inside its end date but whose next occurrence would land past it.
+    const rid = await recurring.createRecurring(db, { name: "Course", amount: 50, direction: "out", currency: "EUR", frequency: "monthly", start_date: "2026-05-20", end_date: "2026-06-10", source_id: acct.id });
+    await recurring.applyRecurringById(db, rid, {}, "2026-05-20"); // next_due → 2026-06-20 > end
+    const sum = await recurring.monthlySummary(db, "2026-06-01");
+    expect(sum.byCurrency.EUR.outflow).toBe(750);
+    expect(sum.byCurrency.EUR.countOut).toBe(2);
+    const { upcomingRecurring } = await import("./repo/dashboard");
+    const up = await upcomingRecurring(db, "2026-06-01", 10);
+    expect(up.map((u) => u.name)).toEqual(["Rent"]);
+  });
+
+  it("a manual apply with a zero override amount is rejected", async () => {
+    const { db } = await makeMemDb();
+    const acct = await sources.createSource(db, { name: "A", currency: "EUR", starting_balance: 100 });
+    const rid = await recurring.createRecurring(db, { name: "Rent", amount: 10, direction: "out", currency: "EUR", frequency: "monthly", start_date: "2026-01-01", source_id: acct.id });
+    await expect(recurring.applyRecurringById(db, rid, { amount: 0 }, "2026-01-05")).rejects.toMatchObject({ code: "invalid_amount" });
+    expect(await sources.getBalance(db, acct.id)).toBe(100);
+  });
+});
+
+describe("whims preferred source and goal allocations from funds", () => {
+  it("a preferred source must exist and share the whim's currency", async () => {
+    const { db } = await makeMemDb();
+    const usd = await sources.createSource(db, { name: "USD", currency: "USD", starting_balance: 0 });
+    const eur = await sources.createSource(db, { name: "EUR", currency: "EUR", starting_balance: 0 });
+    await expect(whims.createWhim(db, { name: "X", amount: 5, currency: "EUR", source_id: usd.id })).rejects.toMatchObject({ code: "currency_mismatch" });
+    await expect(whims.createWhim(db, { name: "X", amount: 5, currency: "EUR", source_id: 9999 })).rejects.toMatchObject({ code: "not_found" });
+    const wid = await whims.createWhim(db, { name: "X", amount: 5, currency: "EUR", source_id: eur.id });
+    await expect(whims.updateWhim(db, wid, { source_id: usd.id })).rejects.toMatchObject({ code: "currency_mismatch" });
+    await whims.updateWhim(db, wid, { source_id: null });
+    expect((await whims.getWhim(db, wid))!.source_id).toBeNull();
+  });
+
+  it("money cannot be allocated to a goal straight out of a savings fund", async () => {
+    const { db } = await makeMemDb();
+    const acct = await sources.createSource(db, { name: "A", currency: "EUR", starting_balance: 1000 });
+    const other = await sources.createSource(db, { name: "B", currency: "EUR", starting_balance: 0 });
+    await createSaving(db, { fromSourceId: acct.id, amount: 300, date: "2026-01-01" });
+    const fund = (await sources.listSources(db)).find((s) => s.is_savings_fund === 1)!;
+    const gid = await goals.createGoal(db, { name: "Bike", target_amount: 200, currency: "EUR", source_id: other.id });
+    await expect(goals.allocate(db, gid, { fromSourceId: fund.id, amount: 100, date: "2026-01-02" })).rejects.toMatchObject({ code: "fund_transfer_not_allowed" });
+    expect(await sources.getBalance(db, fund.id)).toBe(300);
+  });
+});

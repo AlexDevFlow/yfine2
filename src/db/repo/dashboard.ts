@@ -198,10 +198,13 @@ export async function upcomingRecurring(
   today: string,
   limit = 5,
 ): Promise<UpcomingRecurring[]> {
+  // A rule whose next occurrence falls past its own end date is finished — the
+  // scheduler will never fire it (applyRecurringItem throws recurring_ended),
+  // so it must not sit in "Upcoming" with a date it will never hit.
   const rows = await db.select<Omit<UpcomingRecurring, "days_left">>(
     `SELECT id,name,amount,direction,currency,frequency,next_due_date,source_id
      FROM recurring_items
-     WHERE end_date IS NULL OR end_date >= ?
+     WHERE end_date IS NULL OR (end_date >= ? AND next_due_date <= end_date)
      ORDER BY next_due_date ASC LIMIT ?`,
     [today, limit],
   );

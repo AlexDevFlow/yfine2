@@ -46,7 +46,8 @@ export type DomainErrorCode =
   | "no_currency"
   | "fund_currency_locked"
   | "active_goal_blocks_currency_change"
-  | "linked_goal_currency_locked";
+  | "linked_goal_currency_locked"
+  | "invalid_date";
 
 export class DomainError extends Error {
   code: DomainErrorCode;

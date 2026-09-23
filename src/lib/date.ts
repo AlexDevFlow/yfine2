@@ -29,6 +29,19 @@ export function addMonthsISO(iso: string, n: number, anchorDay?: number): string
   return res.toISOString().slice(0, 10);
 }
 
+/**
+ * True for a well-formed `YYYY-MM-DD` that names a real calendar day. A string
+ * that merely looks like a date ("2024-02-31", "2026-5-1") would still be stored
+ * verbatim and then sort, filter and chart wrongly.
+ */
+export function isValidISODate(iso: unknown): iso is string {
+  if (typeof iso !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return false;
+  const [y, m, d] = iso.split("-").map(Number);
+  if (m < 1 || m > 12 || d < 1 || d > 31) return false;
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
+}
+
 /** Day-of-month of an ISO date, e.g. "2026-05-17" → 17. */
 export function dayOfMonth(iso: string): number {
   return Number(iso.slice(8, 10));

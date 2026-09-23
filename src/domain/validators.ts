@@ -3,6 +3,7 @@
  * Repos throw DomainError so the UI can localize; keep these pure of i18n.
  */
 import { DomainError } from "@/db/errors";
+import { isValidISODate } from "@/lib/date";
 
 // ISO-4217 allow-list (the common subset the app supports), mirroring
 // schemas/validators.py:VALID_CURRENCY_CODES. A code outside this set would
@@ -25,6 +26,12 @@ export function validateCurrency(raw: string): string {
     throw new DomainError("invalid_currency");
   }
   return v;
+}
+
+/** Validate a `YYYY-MM-DD` movement/schedule date (a real calendar day). */
+export function validateDate(raw: unknown): string {
+  if (!isValidISODate(raw)) throw new DomainError("invalid_date");
+  return raw;
 }
 
 /** Trim + validate a name (non-empty, <= 200 chars). */

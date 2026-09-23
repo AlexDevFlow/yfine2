@@ -99,7 +99,12 @@ function PurchaseDialog({ whim, sources, tags, onClose, onConfirm, pending, erro
 }) {
   const { t } = useTranslation();
   const opts = sources.filter((s) => s.currency === whim.currency);
-  const [sourceId, setSourceId] = useState(String(whim.source_id ?? opts[0]?.id ?? ""));
+  // Pre-select the preferred source only when it is actually one of the options:
+  // a controlled <select> holding a value that matches no <option> LOOKS like
+  // the first option but submits the stale id (→ currency_mismatch at checkout).
+  const [sourceId, setSourceId] = useState(
+    String(opts.some((s) => s.id === whim.source_id) ? whim.source_id : opts[0]?.id ?? ""),
+  );
   const [note, setNote] = useState("");
   const [tagIds, setTagIds] = useState<number[]>([]);
   // Price defaults to the wishlisted amount but is editable — the real price may have changed.

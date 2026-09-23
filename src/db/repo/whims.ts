@@ -45,8 +45,21 @@ export interface NewWhim {
   url?: string | null;
 }
 
+/**
+ * A "preferred source" is where the whim will be paid from; purchase refuses a
+ * currency mismatch, so catch it at the moment the preference is set instead
+ * of at checkout (and never store a dangling source id).
+ */
+async function checkPreferredSource(db: SqlExecutor, sourceId: number | null | undefined, currency: string): Promise<void> {
+  if (sourceId == null) return;
+  const s = await getSource(db, sourceId);
+  if (!s) throw new DomainError("not_found");
+  if (s.currency.toUpperCase() !== currency.toUpperCase()) throw new DomainError("currency_mismatch");
+}
+
 export async function createWhim(db: SqlExecutor, data: NewWhim): Promise<number> {
   if (!(data.amount > 0)) throw new DomainError("invalid_amount");
+  await checkPreferredSource(db, data.source_id, data.currency.trim().toUpperCase());
   const ts = now();
   const rows = await db.select<{ id: number }>(
     `INSERT INTO whims (name,amount,currency,priority,source_id,status,note,url,purchased_at,linked_goal_id,created_at,updated_at)
@@ -68,6 +81,11 @@ export async function updateWhim(db: SqlExecutor, id: number, patch: WhimPatch):
     // (which refunds the goal into the purchase source) comparing apples to oranges.
     const g = await getGoal(db, w.linked_goal_id);
     if (g && g.status === "active") throw new DomainError("linked_goal_currency_locked");
+  }
+  if (patch.source_id !== undefined || patch.currency !== undefined) {
+    const nextSource = patch.source_id !== undefined ? patch.source_id : w.source_id;
+    const nextCurrency = patch.currency !== undefined ? patch.currency.trim().toUpperCase() : w.currency;
+    await checkPreferredSource(db, nextSource, nextCurrency);
   }
   const sets: string[] = [];
   const params: unknown[] = [];

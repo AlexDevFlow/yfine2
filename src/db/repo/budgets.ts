@@ -9,7 +9,7 @@ import { DomainError } from "../errors";
 import { round2 } from "@/domain/money";
 import { periodBounds, periodKey, shiftPeriod, type Period } from "@/domain/period";
 import { daysBetween, todayISO } from "@/lib/date";
-import { validateCurrency } from "@/domain/validators";
+import { validateCurrency, validateDate } from "@/domain/validators";
 import { createNotification } from "./notifications";
 
 const now = () => new Date().toISOString();
@@ -163,7 +163,7 @@ export async function createBudget(db: SqlExecutor, data: NewBudget): Promise<nu
   const period = data.period ?? "monthly";
   const active = data.active === false ? 0 : 1;
   if (active) await rejectDuplicate(db, data.tag_id, currency);
-  const startDate = data.start_date ?? periodBounds(period, todayISO())[0];
+  const startDate = data.start_date != null ? validateDate(data.start_date) : periodBounds(period, todayISO())[0];
   const ts = now();
   const rows = await db.select<{ id: number }>(
     `INSERT INTO budgets (tag_id,amount,currency,period,direction,rollover,alert_threshold_pct,active,start_date,last_alert_period,last_alert_level,created_at,updated_at)
@@ -211,7 +211,7 @@ export async function updateBudget(db: SqlExecutor, id: number, patch: BudgetPat
   if (patch.rollover !== undefined) set("rollover", patch.rollover ? 1 : 0);
   if (patch.alert_threshold_pct !== undefined) set("alert_threshold_pct", patch.alert_threshold_pct);
   if (patch.active !== undefined) set("active", nextActive);
-  if (patch.start_date !== undefined) set("start_date", patch.start_date);
+  if (patch.start_date !== undefined) set("start_date", validateDate(patch.start_date));
   if (shapeChanged) {
     set("last_alert_period", null);
     set("last_alert_level", 0);

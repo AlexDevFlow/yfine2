@@ -201,10 +201,14 @@ async function buildSection(db: SqlExecutor, key: SectionKey, sourceCache: () =>
       };
     }
     case "recurring": {
-      const list = await recurring.listRecurring(db, todayISO());
-      // Monthly-equivalent income/expense, per currency (don't cross-sum currencies).
+      const today = todayISO();
+      const list = await recurring.listRecurring(db, today);
+      // Monthly-equivalent income/expense, per currency (don't cross-sum
+      // currencies), over the rules still running — an ended rule is listed in
+      // the table but no longer projects (same rule as the Recurring page).
+      const running = list.filter((r) => recurring.isRuleActive(r, today));
       const summary: [string, string | number][] = [];
-      for (const [ccy, { in: mi, out: mo }] of inOutByCurrency(list, (r) => r.currency, (r) => r.direction, (r) => r.amount * (FREQ_MONTHLY_FACTOR[r.frequency] ?? 1))) {
+      for (const [ccy, { in: mi, out: mo }] of inOutByCurrency(running, (r) => r.currency, (r) => r.direction, (r) => r.amount * (FREQ_MONTHLY_FACTOR[r.frequency] ?? 1))) {
         summary.push([`Monthly income (${ccy})`, round2(mi)], [`Monthly expense (${ccy})`, round2(mo)], [`Monthly net (${ccy})`, round2(mi - mo)]);
       }
       summary.push(["Recurring", list.length]);

@@ -66,11 +66,15 @@ function MoveDialog({ goal, sources, title, label, exclude, onClose, onConfirm, 
 }) {
   const { t, i18n } = useTranslation();
   const locale = i18n.resolvedLanguage;
-  const opts = sources.filter((s) => s.currency === goal.currency && (!exclude || s.id !== goal.source_id));
+  const withAmount = label === "allocate";
+  // Allocations can't come out of a savings fund (the repo rejects it — saved
+  // money only moves through the savings/goal flows), so don't offer funds.
+  const opts = sources.filter(
+    (s) => s.currency === goal.currency && (!exclude || s.id !== goal.source_id) && !(withAmount && s.is_savings_fund === 1),
+  );
   const [sourceId, setSourceId] = useState(String(opts[0]?.id ?? ""));
   const [amount, setAmount] = useState("");
   const [date, setDate] = useState(todayISO());
-  const withAmount = label === "allocate";
   const selected = opts.find((s) => s.id === Number(sourceId));
   const amt = Number(amount) || 0;
   // Overdraft hint: allocating more than the funding source holds is allowed but warned.

@@ -8,6 +8,7 @@
 import type { SqlExecutor } from "../types";
 import { DomainError } from "../errors";
 import { round2 } from "@/domain/money";
+import { validateDate } from "@/domain/validators";
 import { todayISO } from "@/lib/date";
 import { ensureFundForCurrency, getSource } from "./sources";
 import { createTransferPair, deleteMovementCascade } from "./transfers";
@@ -51,6 +52,7 @@ export interface NewGoal {
 
 export async function createGoal(db: SqlExecutor, data: NewGoal): Promise<number> {
   if (!(data.target_amount > 0)) throw new DomainError("invalid_amount");
+  if (data.target_date != null) validateDate(data.target_date);
   const currency = data.currency.trim().toUpperCase();
 
   let sourceId = data.source_id ?? null;
@@ -97,6 +99,7 @@ export async function updateGoal(db: SqlExecutor, id: number, patch: GoalPatch):
     throw new DomainError("use_close_or_delete");
   }
   if (patch.target_amount !== undefined && !(patch.target_amount > 0)) throw new DomainError("invalid_amount");
+  if (patch.target_date != null) validateDate(patch.target_date);
   const sets: string[] = [];
   const params: unknown[] = [];
   const set = (c: string, v: unknown) => (sets.push(`${c} = ?`), params.push(v));
@@ -125,8 +128,12 @@ export async function allocate(db: SqlExecutor, goalId: number, input: AllocateI
   const from = await getSource(db, input.fromSourceId);
   if (!from) throw new DomainError("not_found");
   if (from.currency.toUpperCase() !== g.currency.toUpperCase()) throw new DomainError("currency_mismatch");
+  // Saved money only leaves a fund through the savings/goal flows that keep
+  // the fund's records honest (same rule as plain transfers): pulling it into
+  // a goal parked on another account would drain the fund with no trace.
+  if (from.is_savings_fund === 1) throw new DomainError("fund_transfer_not_allowed");
 
-  const date = input.date ?? todayISO();
+  const date = input.date != null ? validateDate(input.date) : todayISO();
   // Asymmetric legs (matches original services/goals.py): the IN leg on the
   // fund reads the bare goal name, the OUT leg on the funding account reads a
   // directional "→ {goal}" so its history shows money flowing toward the goal.
@@ -207,7 +214,7 @@ export async function closeGoal(
   if (!to) throw new DomainError("not_found");
   if (to.currency.toUpperCase() !== g.currency.toUpperCase()) throw new DomainError("currency_mismatch");
 
-  const when = date ?? todayISO();
+  const when = date != null ? validateDate(date) : todayISO();
   const total = await allocatedSum(db, id);
   if (total > 0 && !sameSource) {
     await createTransferPair(db, {

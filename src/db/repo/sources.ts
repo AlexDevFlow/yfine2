@@ -164,7 +164,12 @@ export async function updateSource(
   if (patch.yield_rate !== undefined || patch.yield_period_months !== undefined) {
     const rate = patch.yield_rate ?? cur.yield_rate;
     const period = patch.yield_period_months ?? cur.yield_period_months;
-    set("yield_next_date", resyncYieldSchedule(rate, period, cur.yield_last_date, today));
+    // Interest that was OFF (rate 0 / no schedule) and is being switched back
+    // on starts counting from today. Anchoring on the old last-credit date
+    // would make the scheduler back-fill every period the account spent with
+    // interest disabled, crediting money that was never earned.
+    const wasActive = cur.yield_rate > 0 && cur.yield_next_date != null;
+    set("yield_next_date", resyncYieldSchedule(rate, period, wasActive ? cur.yield_last_date : null, today));
   }
 
   set("updated_at", now());
