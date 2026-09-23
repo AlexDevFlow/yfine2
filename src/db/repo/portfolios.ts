@@ -239,16 +239,18 @@ export async function updateHolding(db: SqlExecutor, id: number, patch: HoldingP
     // clear the manual price so the next auto-refresh takes over
     set("last_price", null);
     set("last_price_at", null);
-  } else if (patch.last_price !== undefined) {
+  } else if (patch.last_price !== undefined && patch.last_price !== h.last_price) {
+    // Only a CHANGED price is a new observation: a note-only edit of a manual
+    // holding must not re-stamp "priced at" to now nor write today's snapshot.
     set("last_price", patch.last_price);
     set("last_price_at", patch.last_price != null ? now() : null);
   }
   set("updated_at", now());
   await db.execute(`UPDATE holdings SET ${sets.join(", ")} WHERE id = ?`, [...params, id]);
 
-  // snapshot only when manual + a price is set + last_price was in the payload
+  // snapshot only when manual + a price is set + the price actually changed
   const after = (await getHolding(db, id))!;
-  if (after.manual_price === 1 && after.last_price != null && patch.last_price !== undefined) {
+  if (after.manual_price === 1 && after.last_price != null && patch.last_price !== undefined && patch.last_price !== h.last_price) {
     await upsertSnapshot(db, after);
   }
 }

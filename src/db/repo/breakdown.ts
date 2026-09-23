@@ -19,7 +19,7 @@
  */
 import type { SqlExecutor } from "../types";
 import { round2 } from "@/domain/money";
-import { addDaysISO, addMonthsISO, daysBetween, monthEnd, monthStart } from "@/lib/date";
+import { addDaysISO, addMonthsISO, dayOfMonth, daysBetween, monthEnd, monthStart } from "@/lib/date";
 import { buildFilter, type MovementFilters } from "./movements";
 
 export interface BreakdownSlice {
@@ -249,16 +249,25 @@ export async function spendingBreakdown(
  *
  * Whole-calendar-month ranges shift by whole months (August compares against
  * July, not "the 31 days before August"), which is what "vs previous period"
- * means to anyone reading a monthly figure. Anything else — a custom filter, a
- * fortnight — shifts back by its own length in days.
+ * means to anyone reading a monthly figure. A month still in progress is
+ * compared month-to-date: on the 23rd, September so far against August 1–23,
+ * not against the whole of August (which would read as a large "drop" early
+ * every month). Anything else — a custom filter, a fortnight — shifts back by
+ * its own length in days.
  */
-export function previousRange(from: string, to: string): { from: string; to: string } {
+export function previousRange(from: string, to: string, today?: string): { from: string; to: string } {
   if (from === monthStart(from) && to === monthEnd(to)) {
     const months =
       (Number(to.slice(0, 4)) - Number(from.slice(0, 4))) * 12 +
       (Number(to.slice(5, 7)) - Number(from.slice(5, 7))) +
       1;
-    return { from: addMonthsISO(from, -months), to: monthEnd(addMonthsISO(monthStart(to), -months)) };
+    const prevFrom = addMonthsISO(from, -months);
+    const prevEnd = monthEnd(addMonthsISO(monthStart(to), -months));
+    if (today && today >= from && today < to) {
+      const sameDay = addMonthsISO(today, -months, dayOfMonth(today));
+      return { from: prevFrom, to: sameDay < prevEnd ? sameDay : prevEnd };
+    }
+    return { from: prevFrom, to: prevEnd };
   }
   const days = daysBetween(from, to) + 1;
   const prevTo = addDaysISO(from, -1);

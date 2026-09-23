@@ -15,6 +15,7 @@ import { groupMovementsHierarchically } from "@/domain/grouping";
 import { cn } from "@/lib/cn";
 import { dayLabel, formatDate, monthLabel } from "@/lib/date";
 import { formatMoney, formatSigned } from "@/lib/format";
+import { useErrorText } from "@/lib/use-error-text";
 
 function Row({ m, locale }: { m: EnrichedMovement; locale?: string }) {
   const { t } = useTranslation();
@@ -101,10 +102,11 @@ export function SourceDetail() {
   // filtered set, so everything up to the cap is loaded and a note says when
   // older rows were left out (rather than silently dropping months).
   const LOAD_CAP = 1000;
-  const { data: movements, isLoading } = useMovements(filters, LOAD_CAP);
+  const { data: movements, isLoading, error } = useMovements(filters, LOAD_CAP);
   const loaded = movements?.items.length ?? 0;
   const truncated = (movements?.total ?? 0) > loaded;
   const { data: sums } = useMovementSums(filters);
+  const errText = useErrorText();
 
   const source = (sources ?? []).find((s) => s.id === id);
   const groups = useMemo(() => groupMovementsHierarchically(movements?.items ?? []), [movements]);
@@ -314,6 +316,9 @@ export function SourceDetail() {
         </div>
       )}
       {isLoading && <Card className="p-8 text-center text-sm text-muted">{t("loading", { defaultValue: "Loading…" })}</Card>}
+      {/* A reversed date/amount range is rejected by the repository — say so
+          instead of rendering an empty page with no explanation. */}
+      {error && <Card className="p-8 text-center text-sm text-negative">{errText(error)}</Card>}
       {movements && groups.length === 0 && (
         <Card className="p-10 text-center text-sm text-muted">
           {activeCount > 0

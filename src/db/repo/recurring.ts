@@ -299,6 +299,13 @@ export async function applyRecurringItem(
         [item.source_id, amount, item.direction, item.next_due_date, applyNote(item, amount, opts.note), ts, ts],
       );
     }
+    // The "is due — apply it?" prompt and the upcoming reminder are answered by
+    // this apply: an unread one would keep asking, and (via hasUnread) block
+    // the next period's prompt from ever being posted.
+    await tx.execute(
+      `UPDATE notifications SET is_read = 1 WHERE is_read = 0 AND related_entity IN (?, ?)`,
+      [`recurring:${item.id}#confirm`, `recurring:${item.id}`],
+    );
     await createNotification(tx, {
       type: "info",
       title: `Applied: ${item.name}`,

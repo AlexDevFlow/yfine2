@@ -429,7 +429,7 @@ export function useBreakdown(filters: movements.MovementFilters | null, currency
       const f = filters!;
       const data = await breakdown.spendingBreakdown(db, f, { currency });
       if (!f.dateFrom || !f.dateTo) return { ...data, previousTotal: null, previousFrom: null, previousTo: null };
-      const prev = breakdown.previousRange(f.dateFrom, f.dateTo);
+      const prev = breakdown.previousRange(f.dateFrom, f.dateTo, todayISO());
       const totals = await breakdown.totalByCurrency(db, { ...f, dateFrom: prev.from, dateTo: prev.to });
       return { ...data, previousTotal: totals[data.currency] ?? 0, previousFrom: prev.from, previousTo: prev.to };
     },
@@ -564,7 +564,9 @@ export function useNetWorthHistoryAll() {
 /** Per-row current-month movements for the month-detail modal (incl. excluded). */
 export function useMonthlyMovements(direction: "in" | "out" | null) {
   return useQuery({
-    queryKey: ["dashboard", "monthMovements", direction],
+    // Keyed by month too, so an app left open across the 1st doesn't serve
+    // last month's rows under "this month" until something else refetches.
+    queryKey: ["dashboard", "monthMovements", direction, monthStart(todayISO())],
     enabled: direction != null,
     queryFn: async () => {
       if (direction == null) return [];

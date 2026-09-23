@@ -782,3 +782,46 @@ describe("income budgets are targets, not ceilings", () => {
     expect(row.last_alert_level).toBe(0);
   });
 });
+
+describe("applying a recurring rule answers its prompts", () => {
+  it("marks the confirm prompt and reminder read so the next period can prompt again", async () => {
+    const { db } = await makeMemDb();
+    const acct = await sources.createSource(db, { name: "A", currency: "EUR", starting_balance: 100 });
+    const rid = await recurring.createRecurring(db, { name: "Gym", amount: 10, direction: "out", currency: "EUR", frequency: "monthly", start_date: "2026-05-01", source_id: acct.id, apply_mode: "confirm" });
+    await recurring.processDueRecurring(db, "2026-05-01"); // posts the "is due" prompt
+    const before = await db.select<{ c: number }>(`SELECT COUNT(*) c FROM notifications WHERE related_entity = ? AND is_read = 0`, [`recurring:${rid}#confirm`]);
+    expect(before[0].c).toBe(1);
+    await recurring.applyRecurringById(db, rid, {}, "2026-05-01");
+    const after = await db.select<{ c: number }>(`SELECT COUNT(*) c FROM notifications WHERE related_entity = ? AND is_read = 0`, [`recurring:${rid}#confirm`]);
+    expect(after[0].c).toBe(0);
+  });
+});
+
+describe("month-to-date comparison", () => {
+  it("compares a month in progress against the same days of the previous month", async () => {
+    const { previousRange } = await import("./repo/breakdown");
+    expect(previousRange("2026-09-01", "2026-09-30", "2026-09-23")).toEqual({ from: "2026-08-01", to: "2026-08-23" });
+    // Day 31 of a 30-day previous month clamps to its end.
+    expect(previousRange("2026-05-01", "2026-05-31", "2026-05-31")).toEqual({ from: "2026-04-01", to: "2026-04-30" });
+    // A finished month still compares whole against whole.
+    expect(previousRange("2026-05-01", "2026-05-31", "2026-09-23")).toEqual({ from: "2026-04-01", to: "2026-04-30" });
+    expect(previousRange("2026-05-01", "2026-05-31")).toEqual({ from: "2026-04-01", to: "2026-04-30" });
+  });
+});
+
+describe("manual holding prices", () => {
+  it("a note-only edit keeps the old 'priced at' stamp and writes no snapshot", async () => {
+    const { db } = await makeMemDb();
+    const s = await sources.createSource(db, { name: "Broker", currency: "EUR" });
+    const pid = await portfolios.createPortfolio(db, { name: "P", base_currency: "EUR", source_id: s.id });
+    const hid = await portfolios.createHolding(db, { portfolio_id: pid, asset_class: "stock", symbol: "X", quantity: 1, avg_cost: 1, currency: "EUR", manual_price: true, last_price: 5 });
+    await db.execute(`UPDATE holdings SET last_price_at = '2020-01-01T00:00:00.000Z' WHERE id = ?`, [hid]);
+    await db.execute(`DELETE FROM holding_price_snapshots`);
+    await portfolios.updateHolding(db, hid, { note: "hello", last_price: 5, manual_price: true });
+    expect((await portfolios.getHolding(db, hid))!.last_price_at).toBe("2020-01-01T00:00:00.000Z");
+    expect((await db.select<{ c: number }>(`SELECT COUNT(*) c FROM holding_price_snapshots`))[0].c).toBe(0);
+    await portfolios.updateHolding(db, hid, { last_price: 6, manual_price: true });
+    expect((await portfolios.getHolding(db, hid))!.last_price_at).not.toBe("2020-01-01T00:00:00.000Z");
+    expect((await db.select<{ c: number }>(`SELECT COUNT(*) c FROM holding_price_snapshots`))[0].c).toBe(1);
+  });
+});

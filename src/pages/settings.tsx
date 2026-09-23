@@ -686,6 +686,7 @@ function ImportCard() {
   const [dragOver, setDragOver] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; text: string; createdIds?: number[] }>();
   const [busy, setBusy] = useState(false);
+  const previewSeq = useRef(0);
 
   const creatingNew = sourceId === NEW_SOURCE;
 
@@ -701,6 +702,10 @@ function ImportCard() {
     } = {},
   ) => {
     const isNew = overrides.creatingNew ?? creatingNew;
+    // Only the LATEST preview may land: switching source/format/preset quickly
+    // fires overlapping parses, and an older one resolving last would show
+    // duplicate flags computed against the wrong account.
+    const seq = ++previewSeq.current;
     setBusy(true);
     setResult(undefined);
     try {
@@ -716,14 +721,15 @@ function ImportCard() {
         sourceId: src,
         options: overrides.map ? { column_map: overrides.map } : undefined,
       });
+      if (seq !== previewSeq.current) return; // superseded by a newer preview
       setPreview(p);
       setInclude(new Set(p.rows.filter((r) => !r.isDuplicate).map((r) => r.index)));
       if (p.needsMapping) setShowMapping(true);
       if (isNew && p.detectedCurrency) setNewCurrency((cur) => cur || p.detectedCurrency!);
     } catch (e) {
-      setResult({ ok: false, text: errText(e) });
+      if (seq === previewSeq.current) setResult({ ok: false, text: errText(e) });
     } finally {
-      setBusy(false);
+      if (seq === previewSeq.current) setBusy(false);
     }
   };
 
@@ -880,7 +886,7 @@ function ImportCard() {
                 </tbody>
               </table>
             </div>
-            <Button disabled={include.size === 0 || (!creatingNew && !sourceId) || commit.isPending} onClick={doImport}>
+            <Button disabled={busy || include.size === 0 || (!creatingNew && !sourceId) || commit.isPending} onClick={doImport}>
               {t("import_confirm_btn", { defaultValue: "Import" })} {include.size}
             </Button>
             {!sourceId && <p className="text-xs text-muted">{t("import_no_source_selected", { defaultValue: "Select a source or create a new one" })}</p>}

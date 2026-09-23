@@ -42,10 +42,15 @@ export function LoginScreen({
 
   useEffect(() => () => window.clearTimeout(leaveTimer.current), []);
 
-  // Tick once a second only while locked, so the "try again in Ns" message counts down.
+  // Tick once a second only while locked, so the "try again in Ns" message
+  // counts down — and stop ticking once the lock has expired.
   useEffect(() => {
     if (lockUntil === null) return;
-    const id = setInterval(() => setNow(Date.now()), 1000);
+    const id = setInterval(() => {
+      const t0 = Date.now();
+      setNow(t0);
+      if (t0 >= lockUntil) setLockUntil(null);
+    }, 1000);
     return () => clearInterval(id);
   }, [lockUntil]);
 

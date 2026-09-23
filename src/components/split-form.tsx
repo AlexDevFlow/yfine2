@@ -42,6 +42,9 @@ export function SplitForm({
     .map((l) => ({ amount: parseMoneyInput(l.amount), tagId: l.tagId ? Number(l.tagId) : null }))
     .filter((l) => l.amount > 0);
   const total = splitTotal(parsedLines);
+  // A line the user typed into but that doesn't parse to a positive amount
+  // ("-20", "10-") must block Save rather than be dropped from the split silently.
+  const hasInvalidLine = lines.some((l) => l.amount.trim() !== "" && !(parseMoneyInput(l.amount) > 0));
 
   const setLine = (i: number, patch: Partial<{ amount: string; tagId: string }>) =>
     setLines((ls) => ls.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
@@ -90,7 +93,7 @@ export function SplitForm({
               <option value="">{t("no_tag", { defaultValue: "(no category)" })}</option>
               {tags.map((tg) => <option key={tg.id} value={tg.id}>{tg.name}</option>)}
             </Select>
-            <MoneyInput value={l.amount} onValueChange={(v) => setLine(i, { amount: v })} placeholder="0.00" className="num w-28" />
+            <MoneyInput value={l.amount} onValueChange={(v) => setLine(i, { amount: v })} placeholder="0.00" className={cn("num w-28", l.amount.trim() !== "" && !(parseMoneyInput(l.amount) > 0) && "border-negative focus:border-negative")} />
             {lines.length > 1 && (
               <button type="button" onClick={() => setLines((ls) => ls.filter((_, idx) => idx !== i))} className="rounded-md p-2 text-muted hover:text-negative"><X className="h-4 w-4" /></button>
             )}
@@ -109,7 +112,7 @@ export function SplitForm({
       {error ? <p className="text-sm text-negative">{error}</p> : null}
       <div className="flex justify-end gap-2">
         <Button type="button" variant="ghost" onClick={onCancel}>{t("cancel", { defaultValue: "Cancel" })}</Button>
-        <Button type="submit" disabled={pending || parsedLines.length === 0}>{t("save", { defaultValue: "Save" })}</Button>
+        <Button type="submit" disabled={pending || parsedLines.length === 0 || hasInvalidLine}>{t("save", { defaultValue: "Save" })}</Button>
       </div>
     </form>
   );
