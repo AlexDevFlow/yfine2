@@ -19,6 +19,8 @@ import * as tags from "./repo/tags";
 import * as recurring from "./repo/recurring";
 import * as savings from "./repo/savings";
 import * as whims from "./repo/whims";
+import { netWorth } from "./repo/dashboard";
+import { getSettings, parseNetWorthExcluded } from "./repo/settings";
 import { netWorthByCurrency, round2 } from "@/domain/money";
 import { todayISO } from "@/lib/date";
 import { version as APP_VERSION } from "../../package.json";
@@ -119,10 +121,12 @@ function makeSourceCache(db: SqlExecutor): () => Promise<SourceData> {
  * currency with NO FX netting (invariant #13).
  */
 async function buildOverview(db: SqlExecutor, sourceCache: () => Promise<SourceData>): Promise<Overview> {
-  const { list, balances } = await sourceCache();
-  const nw = netWorthByCurrency(
-    list.map((s) => ({ currency: s.currency, balance: balances.get(s.id) ?? s.starting_balance })),
-  );
+  const { list } = await sourceCache();
+  // The SAME figure the dashboard prints: cash + linked portfolio value, per
+  // currency, honouring the accounts the user left out of net worth. A
+  // cash-only sum here disagreed with the app as soon as a portfolio existed.
+  const excluded = parseNetWorthExcluded((await getSettings(db)).net_worth_excluded_json);
+  const nw = await netWorth(db, excluded);
   const [movCount, tagCount] = await Promise.all([
     db.select<{ c: number }>(`SELECT COUNT(*) c FROM movements`),
     db.select<{ c: number }>(`SELECT COUNT(*) c FROM tags`),

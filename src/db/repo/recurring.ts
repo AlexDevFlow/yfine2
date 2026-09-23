@@ -325,8 +325,10 @@ export async function processDueRecurring(db: SqlExecutor, today: string): Promi
 
   for (const item of items) {
     try {
-      // ended rules: skip
-      if (item.end_date && item.end_date < today) continue;
+      // Ended rules: skip — both those whose end date has passed and those whose
+      // next occurrence already falls past it (nothing will ever fire again, so a
+      // reminder or a "confirm" prompt would only lead to recurring_ended).
+      if (item.end_date && (item.end_date < today || item.next_due_date > item.end_date)) continue;
 
       // advance reminder + insufficient-funds (once per due cycle)
       const windowStart = addDaysISO(item.next_due_date, -item.alert_days_before);

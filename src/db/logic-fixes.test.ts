@@ -419,3 +419,17 @@ describe("forecast places already-booked future movements on the timeline", () =
     expect(eur.points).toHaveLength(1);
   });
 });
+
+describe("scheduler ignores rules that can never fire again", () => {
+  it("posts no reminder or confirm prompt once the next occurrence is past the end date", async () => {
+    const { db } = await makeMemDb();
+    const acct = await sources.createSource(db, { name: "A", currency: "EUR", starting_balance: 100 });
+    const rid = await recurring.createRecurring(db, { name: "Course", amount: 50, direction: "out", currency: "EUR", frequency: "monthly", start_date: "2026-05-20", end_date: "2026-06-10", source_id: acct.id, alert_days_before: 30 });
+    await recurring.applyRecurringById(db, rid, {}, "2026-05-20"); // next_due → 2026-06-20 > end
+    await db.execute(`DELETE FROM notifications`);
+    const res = await recurring.processDueRecurring(db, "2026-06-01");
+    expect(res).toEqual({ applied: 0, errors: 0 });
+    const n = await db.select<{ c: number }>(`SELECT COUNT(*) c FROM notifications`);
+    expect(n[0].c).toBe(0);
+  });
+});
